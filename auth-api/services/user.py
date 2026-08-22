@@ -114,6 +114,66 @@ class UserService:
 
         return user
 
+    async def list(self, user_list: UserList, limit: int = 100, offset: int = 0) -> Sequence[User]:
+        filters = []
+        if user_list.type:
+            filters.append(User.type == user_list.type)
+        if user_list.first_name:
+            filters.append(User.first_name == user_list.first_name)
+        if user_list.last_name:
+            filters.append(User.last_name == user_list.last_name)
+
+        try:
+            result = await self.session.execute(
+                select(User).where(*filters).limit(limit).offset(offset)
+            )
+            users = result.scalars().all()
+        except OperationalError:
+            logger.error("Database unavailable while listing users — safe to retry")
+            raise
+        except Exception:
+            logger.exception("Failed to list users")
+            raise
+        finally:
+            logger.debug("List attempt finished with limit %d and offset %d", limit, offset)
+
+        return users
+
+    async def update(self, user_id: str, user_update: UserUpdate) -> User | None:
+        try:
+            result = await self.session.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if not user:
+                return None
+
+            if user_update.first_name is not None:
+                user.first_name = user_update.first_name
+            if user_update.last_name is not None:
+                user.last_name = user_update.last_name
+            if user_update.password is not None:
+                user.password_hash = await PasswordHandler.encrypt(user_update.password)
+            if user_update.type is not None:
+                user.type = UserType(user_update.type)
+
+            await self.session.commit()
+            await self.session.refresh(user)
+        except OperationalError:
+            await self.session.rollback()
+            logger.error(
+                "Database unavailable while updating user %s — safe to retry",
+                user_id,
+            )
+            raise
+        except Exception:
+            await self.session.rollback()
+            logger.exception("Failed to update user %s", user_id)
+            raise
+        finally:
+            logger.debug("Update attempt finished for user %s", user_id)
+
+        await self._publish_event(EventType.USER_UPDATED, user)
+        return user
+
     async def _publish_event(self, event_type: EventType, user: User) -> None:
         """A Kafka outage must never fail a request that already succeeded
         in the database — log and move on rather than let it propagate."""

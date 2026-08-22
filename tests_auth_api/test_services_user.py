@@ -6,7 +6,7 @@ from core.config import get_settings
 from core.encryption import JWTHandler
 from core.events import EventType
 from models.user import User, UserType
-from schemas.user import UserCreate, UserGet, UserLogin
+from schemas.user import UserCreate, UserGet, UserList, UserLogin, UserUpdate
 from services.user import UserService
 from sqlalchemy.exc import IntegrityError, OperationalError
 
@@ -202,3 +202,137 @@ class TestGet:
 
         with pytest.raises(OperationalError):
             await service.get(UserGet(email="jane@example.com"))
+
+
+class TestList:
+    def make_existing_user(self, **overrides):
+        defaults = dict(
+            id=uuid4(),
+            email="jane@example.com",
+            first_name="Jane",
+            last_name="Doe",
+            type=UserType.CLIENT,
+            password_hash="hashed",
+        )
+        defaults.update(overrides)
+        return User(**defaults)
+
+    async def test_returns_matching_users_filtered_by_type(self):
+        service, session, producer = make_service()
+        existing = self.make_existing_user()
+        session.execute.return_value = MagicMock(scalars=lambda: MagicMock(all=lambda: [existing]))
+
+        users = await service.list(UserList(type="client"))
+
+        assert users == [existing]
+
+    async def test_returns_matching_users_filtered_by_name(self):
+        service, session, producer = make_service()
+        existing = self.make_existing_user()
+        session.execute.return_value = MagicMock(scalars=lambda: MagicMock(all=lambda: [existing]))
+
+        users = await service.list(UserList(first_name="Jane", last_name="Doe"))
+
+        assert users == [existing]
+
+    async def test_passes_limit_and_offset_through(self):
+        service, session, producer = make_service()
+        session.execute.return_value = MagicMock(scalars=lambda: MagicMock(all=lambda: []))
+
+        await service.list(UserList(type="client"), limit=5, offset=10)
+
+        executed_query = session.execute.await_args.args[0]
+        compiled = str(executed_query.compile(compile_kwargs={"literal_binds": True}))
+        assert "LIMIT 5" in compiled
+        assert "OFFSET 10" in compiled
+
+    async def test_returns_empty_sequence_when_no_match(self):
+        service, session, producer = make_service()
+        session.execute.return_value = MagicMock(scalars=lambda: MagicMock(all=lambda: []))
+
+        users = await service.list(UserList(first_name="Nobody"))
+
+        assert users == []
+
+    async def test_db_outage_reraises(self):
+        service, session, producer = make_service()
+        session.execute.side_effect = OperationalError("stmt", {}, Exception("down"))
+
+        with pytest.raises(OperationalError):
+            await service.list(UserList(type="client"))
+
+
+class TestUpdate:
+    def make_existing_user(self, **overrides):
+        defaults = dict(
+            id=uuid4(),
+            email="jane@example.com",
+            first_name="Jane",
+            last_name="Doe",
+            type=UserType.CLIENT,
+            password_hash="hashed",
+        )
+        defaults.update(overrides)
+        return User(**defaults)
+
+    async def test_returns_none_when_user_not_found(self):
+        service, session, producer = make_service()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: None)
+
+        user = await service.update(str(uuid4()), UserUpdate(first_name="New"))
+
+        assert user is None
+        session.commit.assert_not_called()
+
+    async def test_updates_provided_fields_and_publishes_event(self):
+        service, session, producer = make_service()
+        existing = self.make_existing_user()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: existing)
+
+        user = await service.update(
+            str(existing.id), UserUpdate(first_name="Janet", last_name="Smith", type="admin")
+        )
+
+        assert user is existing
+        assert user.first_name == "Janet"
+        assert user.last_name == "Smith"
+        assert user.type == UserType.ADMIN
+        session.commit.assert_awaited_once()
+        session.refresh.assert_awaited_once_with(existing)
+        producer.publish.assert_awaited_once()
+        topic, event = producer.publish.await_args.args
+        assert event.event_type == EventType.USER_UPDATED
+
+    async def test_rehashes_password_when_provided(self):
+        service, session, producer = make_service()
+        existing = self.make_existing_user()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: existing)
+
+        with patch("services.user.PasswordHandler.encrypt", return_value="new-hash") as encrypt:
+            user = await service.update(str(existing.id), UserUpdate(password=VALID_PASSWORD))
+
+        encrypt.assert_awaited_once_with(VALID_PASSWORD)
+        assert user.password_hash == "new-hash"
+
+    async def test_leaves_fields_untouched_when_omitted(self):
+        service, session, producer = make_service()
+        existing = self.make_existing_user()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: existing)
+
+        user = await service.update(str(existing.id), UserUpdate())
+
+        assert user.first_name == "Jane"
+        assert user.last_name == "Doe"
+        assert user.password_hash == "hashed"
+        assert user.type == UserType.CLIENT
+
+    async def test_db_outage_rolls_back_and_reraises(self):
+        service, session, producer = make_service()
+        existing = self.make_existing_user()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: existing)
+        session.commit.side_effect = OperationalError("stmt", {}, Exception("down"))
+
+        with pytest.raises(OperationalError):
+            await service.update(str(existing.id), UserUpdate(first_name="New"))
+
+        session.rollback.assert_awaited_once()
