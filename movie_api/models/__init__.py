@@ -1,5 +1,6 @@
-from sqlalchemy.orm import DeclarativeBase
+from .base import Base
+from .genre import Genre
+from .moviegenre import MovieGenre
+from .movies import Movie, Showtime
 
-
-class Base(DeclarativeBase):
-    """Shared registry so foreign keys resolve across model modules."""
+__all__ = ["Base", "Genre", "Movie", "MovieGenre", "Showtime"]

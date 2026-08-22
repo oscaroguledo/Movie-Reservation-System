@@ -1,0 +1,140 @@
+from datetime import date, datetime, timezone
+from decimal import Decimal
+from uuid import uuid4
+
+import models
+from core.db.postgresql import Base as PostgresBase
+from models import Genre, Movie, MovieGenre, Showtime
+
+
+def test_all_models_register_on_the_single_shared_base():
+    """Regression test: models/__init__.py and models/base.py each used to
+    define their own separate Base(DeclarativeBase), so models registered
+    against one were invisible to init_models()'s Base.metadata.create_all(),
+    meaning no tables would ever actually get created."""
+    assert models.Base is PostgresBase
+    assert set(models.Base.metadata.tables) == {
+        "movie_api.genres",
+        "movie_api.movies",
+        "movie_api.movie_genres",
+        "movie_api.showtimes",
+    }
+
+
+def make_genre(**overrides):
+    defaults = dict(id=uuid4(), name="Action", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    defaults.update(overrides)
+    return Genre(**defaults)
+
+
+def make_movie(**overrides):
+    defaults = dict(
+        id=uuid4(),
+        title="Inception",
+        description="A thief who steals corporate secrets.",
+        poster_image_url="https://example.com/poster.jpg",
+        release_date=date(2010, 7, 16),
+        duration_minutes=148,
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    defaults.update(overrides)
+    return Movie(**defaults)
+
+
+def make_showtime(**overrides):
+    defaults = dict(
+        id=uuid4(),
+        movie_id=uuid4(),
+        start_time=datetime(2026, 1, 1, 18, 0, tzinfo=timezone.utc),
+        end_time=datetime(2026, 1, 1, 20, 30, tzinfo=timezone.utc),
+        price=Decimal("12.50"),
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    defaults.update(overrides)
+    return Showtime(**defaults)
+
+
+class TestGenre:
+    def test_to_dict(self):
+        genre = make_genre()
+
+        assert genre.to_dict() == {
+            "id": str(genre.id),
+            "name": "Action",
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }
+
+    def test_repr_and_str_include_id_and_name(self):
+        genre = make_genre()
+
+        assert str(genre.id) in repr(genre)
+        assert "Action" in repr(genre)
+        assert str(genre.id) in str(genre)
+        assert "Action" in str(genre)
+
+
+class TestMovie:
+    def test_to_dict_with_all_fields(self):
+        movie = make_movie()
+
+        data = movie.to_dict()
+
+        assert data["title"] == "Inception"
+        assert data["poster_image_url"] == "https://example.com/poster.jpg"
+        assert data["release_date"] == "2010-07-16"
+        assert data["duration_minutes"] == 148
+
+    def test_to_dict_handles_missing_optional_fields(self):
+        movie = make_movie(release_date=None, duration_minutes=None)
+
+        data = movie.to_dict()
+
+        assert data["release_date"] is None
+        assert data["duration_minutes"] is None
+
+    def test_repr_and_str_include_id_and_title(self):
+        movie = make_movie()
+
+        assert str(movie.id) in repr(movie)
+        assert "Inception" in repr(movie)
+        assert str(movie.id) in str(movie)
+        assert "Inception" in str(movie)
+
+
+class TestShowtime:
+    def test_to_dict(self):
+        showtime = make_showtime()
+
+        data = showtime.to_dict()
+
+        assert data["movie_id"] == str(showtime.movie_id)
+        assert data["start_time"] == "2026-01-01T18:00:00+00:00"
+        assert data["price"] == 12.50
+
+    def test_repr_and_str_include_id_movie_id_and_start_time(self):
+        showtime = make_showtime()
+
+        assert str(showtime.id) in repr(showtime)
+        assert str(showtime.movie_id) in repr(showtime)
+        assert str(showtime.id) in str(showtime)
+
+
+class TestMovieGenre:
+    def test_to_dict(self):
+        movie_id = uuid4()
+        genre_id = uuid4()
+        link = MovieGenre(movie_id=movie_id, genre_id=genre_id)
+
+        assert link.to_dict() == {"movie_id": str(movie_id), "genre_id": str(genre_id)}
+
+    def test_repr_and_str_include_movie_id_and_genre_id(self):
+        movie_id = uuid4()
+        genre_id = uuid4()
+        link = MovieGenre(movie_id=movie_id, genre_id=genre_id)
+
+        assert str(movie_id) in repr(link)
+        assert str(genre_id) in repr(link)
+        assert str(movie_id) in str(link)
+        assert str(genre_id) in str(link)
