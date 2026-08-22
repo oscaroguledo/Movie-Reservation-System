@@ -73,6 +73,7 @@ async def register(
     response.status_code = 201
     return SResponse(data=user.to_dict(), message="User created", status=201)
 
+
 @router.post("/register/admin", response_model=APIResponse[dict])
 async def registeradmin(
     payload: UserCreate,
@@ -96,6 +97,7 @@ async def registeradmin(
     response.status_code = 201
     return SResponse(data=user.to_dict(), message="Admin user created", status=201)
 
+
 @router.post("/login", response_model=APIResponse[dict])
 async def login(
     payload: UserLogin,
@@ -117,6 +119,7 @@ async def login(
     response.status_code = 200
     return SResponse(data={"token": token}, message="Login successful", status=200)
 
+
 @router.get("/me", response_model=APIResponse[dict])
 async def get_me(
     response: Response,
@@ -137,6 +140,7 @@ async def get_me(
 
     response.status_code = 200
     return SResponse(data=user.to_dict(), message="User details retrieved", status=200)
+
 
 @router.get("/", response_model=APIResponse[dict])
 async def get_user(
@@ -163,6 +167,7 @@ async def get_user(
     response.status_code = 200
     return SResponse(data=user.to_dict(), message="User details retrieved", status=200)
 
+
 @router.get("/users", response_model=APIResponse[list[dict]])
 async def list_users(
     response: Response,
@@ -188,3 +193,57 @@ async def list_users(
     return SResponse(
         data=[user.to_dict() for user in users], message="User list retrieved", status=200
     )
+
+
+@router.patch("/users/{user_id}", response_model=APIResponse[dict])
+async def update_user(
+    user_id: UUID,
+    payload: UserUpdate,
+    response: Response,
+    user_service: UserService = Depends(get_user_service),
+    current_user: User = Depends(get_current_user),
+) -> APIResponse:
+    # Changing type is a privilege-escalation vector — never let a
+    # non-admin set it, regardless of whose record they're touching.
+    if payload.type is not None and current_user.type != UserType.ADMIN:
+        response.status_code = 403
+        return EResponse(message="Admin privileges required to change user type", status=403)
+
+    # Non-admins may only update their own record — otherwise any client
+    # could edit another user's name or password.
+    if current_user.type != UserType.ADMIN and user_id != current_user.id:
+        response.status_code = 403
+        return EResponse(message="Admin privileges required to update this user", status=403)
+
+    try:
+        target = await user_service.get(UserGet(id=user_id))
+    except OperationalError:
+        response.status_code = 503
+        return EResponse(message="Database unavailable, please try again later", status=503)
+    except Exception:
+        response.status_code = 500
+        return EResponse(message="Internal server error", status=500)
+
+    if not target:
+        response.status_code = 404
+        return EResponse(message="User not found", status=404)
+
+    if current_user.type != UserType.ADMIN and target.type == UserType.ADMIN:
+        response.status_code = 403
+        return EResponse(message="Admin privileges required to update this user", status=403)
+
+    try:
+        updated = await user_service.update(str(user_id), payload)
+    except OperationalError:
+        response.status_code = 503
+        return EResponse(message="Database unavailable, please try again later", status=503)
+    except Exception:
+        response.status_code = 500
+        return EResponse(message="Internal server error", status=500)
+
+    if not updated:
+        response.status_code = 404
+        return EResponse(message="User not found", status=404)
+
+    response.status_code = 200
+    return SResponse(data=updated.to_dict(), message="User updated", status=200)

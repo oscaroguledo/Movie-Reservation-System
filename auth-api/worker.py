@@ -17,6 +17,7 @@ async def handle_event(event: Event) -> None:
         ...  # e.g. log the login event
         pass
 
+
 async def main():
     async with KafkaConsumer(TOPIC, group_id="notifications") as consumer:
         await consumer.consume(handle_event)

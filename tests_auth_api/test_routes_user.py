@@ -447,3 +447,122 @@ class TestListUsers:
         response = client.get("/users", params={"type": "client"})
 
         assert response.status_code == 500
+
+
+class TestUpdateUser:
+    def test_admin_can_update_another_user(self):
+        target = make_user()
+        service = AsyncMock()
+        service.get.return_value = target
+        service.update.return_value = make_user(first_name="Janet")
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.patch(f"/users/{target.id}", json={"first_name": "Janet"})
+
+        assert response.status_code == 200
+        assert response.json()["data"]["first_name"] == "Janet"
+
+    def test_admin_can_change_a_users_type(self):
+        target = make_user()
+        service = AsyncMock()
+        service.get.return_value = target
+        service.update.return_value = make_user(type=UserType.ADMIN)
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.patch(f"/users/{target.id}", json={"type": "admin"})
+
+        assert response.status_code == 200
+
+    def test_non_admin_can_update_their_own_record(self):
+        me = make_user()
+        service = AsyncMock()
+        service.get.return_value = me
+        service.update.return_value = make_user(first_name="Janet", id=me.id)
+        client = make_client(service, current_user=me)
+
+        response = client.patch(f"/users/{me.id}", json={"first_name": "Janet"})
+
+        assert response.status_code == 200
+
+    def test_non_admin_cannot_update_another_user(self):
+        me = make_user()
+        someone_else = make_user(id=uuid4())
+        service = AsyncMock()
+        client = make_client(service, current_user=me)
+
+        response = client.patch(f"/users/{someone_else.id}", json={"first_name": "Janet"})
+
+        assert response.status_code == 403
+        service.get.assert_not_called()
+        service.update.assert_not_called()
+
+    def test_non_admin_cannot_change_their_own_type(self):
+        me = make_user()
+        service = AsyncMock()
+        client = make_client(service, current_user=me)
+
+        response = client.patch(f"/users/{me.id}", json={"type": "admin"})
+
+        assert response.status_code == 403
+        service.update.assert_not_called()
+
+    def test_returns_404_when_target_not_found(self):
+        service = AsyncMock()
+        service.get.return_value = None
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.patch(f"/users/{uuid4()}", json={"first_name": "Janet"})
+
+        assert response.status_code == 404
+        service.update.assert_not_called()
+
+    def test_returns_404_when_update_finds_nothing_to_update(self):
+        target = make_user()
+        service = AsyncMock()
+        service.get.return_value = target
+        service.update.return_value = None
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.patch(f"/users/{target.id}", json={"first_name": "Janet"})
+
+        assert response.status_code == 404
+
+    def test_db_outage_during_lookup_returns_503(self):
+        service = AsyncMock()
+        service.get.side_effect = OperationalError("stmt", {}, Exception("down"))
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.patch(f"/users/{uuid4()}", json={"first_name": "Janet"})
+
+        assert response.status_code == 503
+
+    def test_unexpected_error_during_lookup_returns_500(self):
+        service = AsyncMock()
+        service.get.side_effect = RuntimeError("boom")
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.patch(f"/users/{uuid4()}", json={"first_name": "Janet"})
+
+        assert response.status_code == 500
+
+    def test_db_outage_during_update_returns_503(self):
+        target = make_user()
+        service = AsyncMock()
+        service.get.return_value = target
+        service.update.side_effect = OperationalError("stmt", {}, Exception("down"))
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.patch(f"/users/{target.id}", json={"first_name": "Janet"})
+
+        assert response.status_code == 503
+
+    def test_unexpected_error_during_update_returns_500(self):
+        target = make_user()
+        service = AsyncMock()
+        service.get.return_value = target
+        service.update.side_effect = RuntimeError("boom")
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.patch(f"/users/{target.id}", json={"first_name": "Janet"})
+
+        assert response.status_code == 500

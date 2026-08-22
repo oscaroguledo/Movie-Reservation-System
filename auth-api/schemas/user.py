@@ -34,10 +34,9 @@ class UserCreate(BaseModel):
         if not re.search(r"\d", value):
             raise ValueError("Password must contain at least one digit.")
         if not re.search(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>/?]", value):
-            raise ValueError(
-                "Password must contain at least one special character."
-            )
+            raise ValueError("Password must contain at least one special character.")
         return value
+
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -51,6 +50,7 @@ class UserLogin(BaseModel):
             }
         }
     )
+
     @field_validator("password")
     @classmethod
     def validate_password_complexity(cls, value: str) -> str:
@@ -62,10 +62,9 @@ class UserLogin(BaseModel):
         if not re.search(r"\d", value):
             raise ValueError("Password must contain at least one digit.")
         if not re.search(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>/?]", value):
-            raise ValueError(
-                "Password must contain at least one special character."
-            )
+            raise ValueError("Password must contain at least one special character.")
         return value
+
 
 class UserGet(BaseModel):
     id: UUID | None = None
@@ -80,16 +79,14 @@ class UserGet(BaseModel):
             }
         }
     )
-    
+
     @model_validator(mode="after")
     def validate_at_least_one_field_provided(self) -> "UserGet":
         """At least one filter field must be provided for a valid UserGet request."""
         if not any((self.id, self.email, self.type)):
-            raise ValueError(
-                "At least one of id, email, type must be provided."
-            )
+            raise ValueError("At least one of id, email, type must be provided.")
         return self
-    
+
 
 class UserList(BaseModel):
     type: str | None = Field(default=None, pattern="^(admin|client)$")
@@ -110,10 +107,9 @@ class UserList(BaseModel):
     def validate_at_least_one_field_provided(self) -> "UserList":
         """At least one filter field must be provided for a valid UserList request."""
         if not any((self.type, self.first_name, self.last_name)):
-            raise ValueError(
-                "At least one of type, first_name, last_name must be provided."
-            )
+            raise ValueError("At least one of type, first_name, last_name must be provided.")
         return self
+
 
 class UserUpdate(BaseModel):
     first_name: str | None = Field(default=None, min_length=1, max_length=50)
@@ -149,7 +145,5 @@ class UserUpdate(BaseModel):
         if not re.search(r"\d", value):
             raise ValueError("Password must contain at least one digit.")
         if not re.search(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>/?]", value):
-            raise ValueError(
-                "Password must contain at least one special character."
-            )
+            raise ValueError("Password must contain at least one special character.")
         return value

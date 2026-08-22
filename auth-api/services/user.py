@@ -173,7 +173,7 @@ class UserService:
 
         await self._publish_event(EventType.USER_UPDATED, user)
         return user
-    
+
     async def delete(self, user_get: UserGet) -> bool:
         try:
             result = await self.session.execute(
@@ -202,7 +202,6 @@ class UserService:
             logger.debug("Delete attempt finished for user %s", user_get.id or user_get.email)
 
         return True
-
 
     async def _publish_event(self, event_type: EventType, user: User) -> None:
         """A Kafka outage must never fail a request that already succeeded

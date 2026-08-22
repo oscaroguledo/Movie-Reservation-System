@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
+
+
 @router.get("/health", response_model=APIResponse[dict])
 async def healthz(
     response: Response,

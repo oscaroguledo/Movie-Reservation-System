@@ -20,9 +20,7 @@ class User(Base):
     """Movie Reservation System user model."""
 
     __tablename__ = "users"
-    __table_args__ = {
-        
-        "schema": "auth_api"}
+    __table_args__ = {"schema": "auth_api"}
 
     id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -39,15 +37,11 @@ class User(Base):
         default=UserType.CLIENT,
         server_default=UserType.CLIENT.value,
     )
-    email: Mapped[str] = mapped_column(
-        String, unique=True, nullable=False, index=True
-    )
+    email: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
     first_name: Mapped[str] = mapped_column(String, nullable=False)
     last_name: Mapped[str] = mapped_column(String, nullable=False)
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        server_default=func.now(), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),
         onupdate=func.now(),
