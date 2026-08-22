@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import models
 from core.db.postgresql import Base as PostgresBase
-from models import Genre, Movie, MovieGenre, Showtime
+from models import Genre, Movie, MovieGenre, MovieShowtime, Showtime
 
 
 def test_all_models_register_on_the_single_shared_base():
@@ -17,6 +17,7 @@ def test_all_models_register_on_the_single_shared_base():
         "movie_api.genres",
         "movie_api.movies",
         "movie_api.movie_genres",
+        "movie_api.movie_showtimes",
         "movie_api.showtimes",
     }
 
@@ -63,7 +64,6 @@ def make_movie(**overrides):
 def make_showtime(**overrides):
     defaults = dict(
         id=uuid4(),
-        movie_id=uuid4(),
         start_time=datetime(2026, 1, 1, 18, 0, tzinfo=timezone.utc),
         end_time=datetime(2026, 1, 1, 20, 30, tzinfo=timezone.utc),
         price=Decimal("12.50"),
@@ -127,7 +127,6 @@ class TestShowtime:
 
         data = showtime.to_dict()
 
-        assert data["movie_id"] == str(showtime.movie_id)
         assert data["start_time"] == "2026-01-01T18:00:00+00:00"
         assert data["duration_minutes"] == 150
         assert data["price"] == 12.50
@@ -141,32 +140,39 @@ class TestShowtime:
 
         assert showtime.duration_minutes == 135
 
-    def test_repr_and_str_include_id_movie_id_and_start_time(self):
+    def test_repr_and_str_include_id_and_start_time(self):
         showtime = make_showtime()
 
         assert str(showtime.id) in repr(showtime)
-        assert str(showtime.movie_id) in repr(showtime)
         assert str(showtime.id) in str(showtime)
 
 
 class TestMovieShowtimeRelationship:
-    def test_a_movie_can_have_multiple_showtimes(self):
+    def test_a_showtime_can_screen_multiple_movies(self):
+        """E.g. a double feature in the same room/slot."""
+        showtime = make_showtime()
+        first_movie = make_movie(title="Inception")
+        second_movie = make_movie(title="Interstellar")
+
+        showtime.movies.append(first_movie)
+        showtime.movies.append(second_movie)
+
+        assert list(showtime.movies) == [first_movie, second_movie]
+        assert showtime in first_movie.showtimes
+        assert showtime in second_movie.showtimes
+
+    def test_a_movie_can_screen_at_multiple_showtimes(self):
+        """E.g. the same movie playing in different rooms at once."""
         movie = make_movie()
-        first = make_showtime(movie_id=movie.id)
-        second = make_showtime(movie_id=movie.id)
-        first.movie = movie
-        second.movie = movie
+        first_showtime = make_showtime()
+        second_showtime = make_showtime()
 
-        assert list(movie.showtimes) == [first, second]
+        movie.showtimes.append(first_showtime)
+        movie.showtimes.append(second_showtime)
 
-    def test_a_showtime_belongs_to_exactly_one_movie(self):
-        movie = make_movie()
-        showtime = make_showtime(movie_id=movie.id)
-
-        showtime.movie = movie
-
-        assert showtime.movie is movie
-        assert showtime in movie.showtimes
+        assert list(movie.showtimes) == [first_showtime, second_showtime]
+        assert movie in first_showtime.movies
+        assert movie in second_showtime.movies
 
 
 class TestMovieGenre:
@@ -186,3 +192,22 @@ class TestMovieGenre:
         assert str(genre_id) in repr(link)
         assert str(movie_id) in str(link)
         assert str(genre_id) in str(link)
+
+
+class TestMovieShowtime:
+    def test_to_dict(self):
+        movie_id = uuid4()
+        showtime_id = uuid4()
+        link = MovieShowtime(movie_id=movie_id, showtime_id=showtime_id)
+
+        assert link.to_dict() == {"movie_id": str(movie_id), "showtime_id": str(showtime_id)}
+
+    def test_repr_and_str_include_movie_id_and_showtime_id(self):
+        movie_id = uuid4()
+        showtime_id = uuid4()
+        link = MovieShowtime(movie_id=movie_id, showtime_id=showtime_id)
+
+        assert str(movie_id) in repr(link)
+        assert str(showtime_id) in repr(link)
+        assert str(movie_id) in str(link)
+        assert str(showtime_id) in str(link)

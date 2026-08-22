@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, func
+from sqlalchemy import Date, DateTime, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,9 +35,12 @@ class Movie(Base):
         nullable=False,
     )
 
-    # A movie can have many showtimes; each showtime belongs to exactly one
-    # movie (enforced by Showtime.movie_id being a single, non-nullable FK).
-    showtimes: Mapped[list["Showtime"]] = relationship(back_populates="movie")
+    # Many-to-many, via movie_showtimes: a movie can screen at multiple
+    # showtimes (e.g. the same movie playing in different rooms), and a
+    # showtime can screen multiple movies (e.g. a double feature).
+    showtimes: Mapped[list["Showtime"]] = relationship(
+        secondary="movie_api.movie_showtimes", back_populates="movies"
+    )
 
     def __repr__(self) -> str:
         return f"<Movie(id={self.id}, title={self.title})>"
@@ -69,12 +72,6 @@ class Showtime(Base):
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
-    movie_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("movie_api.movies.id"),
-        nullable=False,
-        index=True,
-    )
     start_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )
@@ -90,13 +87,15 @@ class Showtime(Base):
         nullable=False,
     )
 
-    movie: Mapped["Movie"] = relationship(back_populates="showtimes")
+    movies: Mapped[list["Movie"]] = relationship(
+        secondary="movie_api.movie_showtimes", back_populates="showtimes"
+    )
 
     def __repr__(self) -> str:
-        return f"<Showtime(id={self.id}, movie_id={self.movie_id}, start_time={self.start_time})>"
+        return f"<Showtime(id={self.id}, start_time={self.start_time})>"
 
     def __str__(self) -> str:
-        return f"Showtime(id={self.id}, movie_id={self.movie_id}, start_time={self.start_time})"
+        return f"Showtime(id={self.id}, start_time={self.start_time})"
 
     @property
     def duration_minutes(self) -> int:
@@ -107,7 +106,6 @@ class Showtime(Base):
     def to_dict(self) -> dict:
         return {
             "id": str(self.id),
-            "movie_id": str(self.movie_id),
             "start_time": self.start_time.isoformat(),
             "duration_minutes": self.duration_minutes,
             "price": float(self.price),
