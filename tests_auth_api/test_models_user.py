@@ -1,0 +1,58 @@
+from uuid import uuid4
+
+from models.user import User, UserType
+
+
+def make_user(**overrides):
+    defaults = dict(
+        id=uuid4(),
+        email="jane@example.com",
+        first_name="Jane",
+        last_name="Doe",
+        type=UserType.CLIENT,
+        password_hash="hashed",
+    )
+    defaults.update(overrides)
+    return User(**defaults)
+
+
+def test_user_type_values():
+    assert UserType.ADMIN == "admin"
+    assert UserType.CLIENT == "client"
+
+
+def test_to_dict_excludes_password_hash():
+    user = make_user()
+
+    data = user.to_dict()
+
+    assert "password_hash" not in data
+    assert data["email"] == "jane@example.com"
+    assert data["first_name"] == "Jane"
+    assert data["last_name"] == "Doe"
+    assert data["id"] == str(user.id)
+
+
+def test_to_dict_serializes_type_as_its_string_value():
+    user = make_user(type=UserType.ADMIN)
+
+    assert user.to_dict()["type"] == "admin"
+
+
+def test_to_dict_handles_missing_timestamps():
+    user = make_user()
+
+    data = user.to_dict()
+
+    assert data["created_at"] is None
+    assert data["updated_at"] is None
+
+
+def test_repr_includes_id_email_and_type():
+    user = make_user(email="jane@example.com", type=UserType.ADMIN)
+
+    text = repr(user)
+
+    assert str(user.id) in text
+    assert "jane@example.com" in text
+    assert "UserType.ADMIN" in text
