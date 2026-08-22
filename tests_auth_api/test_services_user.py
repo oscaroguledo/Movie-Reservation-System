@@ -336,3 +336,59 @@ class TestUpdate:
             await service.update(str(existing.id), UserUpdate(first_name="New"))
 
         session.rollback.assert_awaited_once()
+
+
+class TestDelete:
+    def make_existing_user(self, **overrides):
+        defaults = dict(
+            id=uuid4(),
+            email="jane@example.com",
+            first_name="Jane",
+            last_name="Doe",
+            type=UserType.CLIENT,
+            password_hash="hashed",
+        )
+        defaults.update(overrides)
+        return User(**defaults)
+
+    async def test_returns_false_when_user_not_found(self):
+        service, session, producer = make_service()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: None)
+
+        deleted = await service.delete(UserGet(email="missing@example.com"))
+
+        assert deleted is False
+        session.delete.assert_not_called()
+        session.commit.assert_not_called()
+
+    async def test_deletes_by_id_and_returns_true(self):
+        service, session, producer = make_service()
+        existing = self.make_existing_user()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: existing)
+
+        deleted = await service.delete(UserGet(id=existing.id))
+
+        assert deleted is True
+        session.delete.assert_awaited_once_with(existing)
+        session.commit.assert_awaited_once()
+
+    async def test_deletes_by_email_and_returns_true(self):
+        service, session, producer = make_service()
+        existing = self.make_existing_user()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: existing)
+
+        deleted = await service.delete(UserGet(email="jane@example.com"))
+
+        assert deleted is True
+        session.delete.assert_awaited_once_with(existing)
+
+    async def test_db_outage_rolls_back_and_reraises(self):
+        service, session, producer = make_service()
+        existing = self.make_existing_user()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: existing)
+        session.commit.side_effect = OperationalError("stmt", {}, Exception("down"))
+
+        with pytest.raises(OperationalError):
+            await service.delete(UserGet(id=existing.id))
+
+        session.rollback.assert_awaited_once()
