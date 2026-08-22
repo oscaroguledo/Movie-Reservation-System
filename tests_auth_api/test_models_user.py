@@ -55,4 +55,7 @@ def test_repr_includes_id_email_and_type():
 
     assert str(user.id) in text
     assert "jane@example.com" in text
-    assert "UserType.ADMIN" in text
+    # f-string rendering of a str-mixed Enum differs across Python versions
+    # (e.g. "admin" on 3.10 vs "UserType.ADMIN" on 3.14) — match __repr__'s
+    # own formatting rather than hardcoding one version's output.
+    assert f"{user.type}" in text
