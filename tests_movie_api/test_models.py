@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import models
 from core.db.postgresql import Base as PostgresBase
-from models import Genre, Movie, MovieGenre, MovieShowtime, Showroom, Showtime
+from models import Genre, Movie, MovieGenre, MovieShowtime, Showroom, ShowroomSeat, Showtime
 
 
 def test_all_models_register_on_the_single_shared_base():
@@ -19,6 +19,7 @@ def test_all_models_register_on_the_single_shared_base():
         "movie_api.movie_genres",
         "movie_api.movie_showtimes",
         "movie_api.showrooms",
+        "movie_api.showroom_seats",
         "movie_api.showtimes",
     }
 
@@ -72,6 +73,18 @@ def make_showroom(**overrides):
     )
     defaults.update(overrides)
     return Showroom(**defaults)
+
+
+def make_showroom_seat(**overrides):
+    defaults = dict(
+        id=uuid4(),
+        showroom_id=uuid4(),
+        row="A",
+        number=1,
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    defaults.update(overrides)
+    return ShowroomSeat(**defaults)
 
 
 def make_showtime(**overrides):
@@ -152,6 +165,42 @@ class TestShowroom:
         assert "Room 1" in repr(showroom)
         assert str(showroom.id) in str(showroom)
         assert "Room 1" in str(showroom)
+
+
+class TestShowroomSeat:
+    def test_seat_labels_are_unique_per_showroom_not_globally(self):
+        """The same (row, number) must be reusable across different
+        showrooms, but not duplicated within the same one."""
+        constraint_columns = {
+            tuple(c.name for c in uc.columns)
+            for uc in ShowroomSeat.__table__.constraints
+            if uc.__class__.__name__ == "UniqueConstraint"
+        }
+        assert ("showroom_id", "row", "number") in constraint_columns
+
+    def test_showroom_id_is_a_real_foreign_key(self):
+        fk_targets = {fk.target_fullname for fk in ShowroomSeat.__table__.foreign_keys}
+        assert "movie_api.showrooms.id" in fk_targets
+
+    def test_to_dict(self):
+        seat = make_showroom_seat()
+
+        assert seat.to_dict() == {
+            "id": str(seat.id),
+            "showroom_id": str(seat.showroom_id),
+            "row": "A",
+            "number": 1,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }
+
+    def test_repr_and_str_include_id_showroom_id_row_and_number(self):
+        seat = make_showroom_seat()
+
+        assert str(seat.id) in repr(seat)
+        assert str(seat.showroom_id) in repr(seat)
+        assert "A" in repr(seat)
+        assert str(seat.id) in str(seat)
+        assert str(seat.showroom_id) in str(seat)
 
 
 class TestShowtime:
