@@ -149,6 +149,26 @@ class TestShowtime:
         assert str(showtime.id) in str(showtime)
 
 
+class TestMovieShowtimeRelationship:
+    def test_a_movie_can_have_multiple_showtimes(self):
+        movie = make_movie()
+        first = make_showtime(movie_id=movie.id)
+        second = make_showtime(movie_id=movie.id)
+        first.movie = movie
+        second.movie = movie
+
+        assert list(movie.showtimes) == [first, second]
+
+    def test_a_showtime_belongs_to_exactly_one_movie(self):
+        movie = make_movie()
+        showtime = make_showtime(movie_id=movie.id)
+
+        showtime.movie = movie
+
+        assert showtime.movie is movie
+        assert showtime in movie.showtimes
+
+
 class TestMovieGenre:
     def test_to_dict(self):
         movie_id = uuid4()

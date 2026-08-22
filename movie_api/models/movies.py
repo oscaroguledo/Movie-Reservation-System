@@ -4,7 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
 
@@ -34,6 +34,10 @@ class Movie(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+    # A movie can have many showtimes; each showtime belongs to exactly one
+    # movie (enforced by Showtime.movie_id being a single, non-nullable FK).
+    showtimes: Mapped[list["Showtime"]] = relationship(back_populates="movie")
 
     def __repr__(self) -> str:
         return f"<Movie(id={self.id}, title={self.title})>"
@@ -85,6 +89,8 @@ class Showtime(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+    movie: Mapped["Movie"] = relationship(back_populates="showtimes")
 
     def __repr__(self) -> str:
         return f"<Showtime(id={self.id}, movie_id={self.movie_id}, start_time={self.start_time})>"
