@@ -6,7 +6,7 @@ from core.config import get_settings
 from core.encryption import JWTHandler
 from core.events import EventType
 from models.user import User, UserType
-from schemas.user import UserCreate, UserLogin
+from schemas.user import UserCreate, UserGet, UserLogin
 from services.user import UserService
 from sqlalchemy.exc import IntegrityError, OperationalError
 
@@ -134,7 +134,7 @@ class TestLogin:
             )
 
         assert token is not None
-        decoded = JWTHandler().decode(token, get_settings().jwt_secret_key)
+        decoded = await JWTHandler().decode(token, get_settings().jwt_secret_key)
         assert decoded["sub"] == str(existing.id)
         assert decoded["email"] == "jane@example.com"
         assert decoded["type"] == "admin"
@@ -149,3 +149,56 @@ class TestLogin:
 
         with pytest.raises(OperationalError):
             await service.login(UserLogin(email="jane@example.com", password=VALID_PASSWORD))
+
+
+class TestGet:
+    def make_existing_user(self, **overrides):
+        defaults = dict(
+            id=uuid4(),
+            email="jane@example.com",
+            first_name="Jane",
+            last_name="Doe",
+            type=UserType.CLIENT,
+            password_hash="hashed",
+        )
+        defaults.update(overrides)
+        return User(**defaults)
+
+    async def test_requires_id_or_email(self):
+        service, session, producer = make_service()
+
+        with pytest.raises(ValueError, match="requires id or email"):
+            await service.get(UserGet(type="admin"))
+
+    async def test_looks_up_by_id(self):
+        service, session, producer = make_service()
+        existing = self.make_existing_user()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: existing)
+
+        user = await service.get(UserGet(id=existing.id))
+
+        assert user is existing
+
+    async def test_looks_up_by_email(self):
+        service, session, producer = make_service()
+        existing = self.make_existing_user()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: existing)
+
+        user = await service.get(UserGet(email="jane@example.com"))
+
+        assert user is existing
+
+    async def test_returns_none_when_not_found(self):
+        service, session, producer = make_service()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: None)
+
+        user = await service.get(UserGet(email="missing@example.com"))
+
+        assert user is None
+
+    async def test_db_outage_reraises(self):
+        service, session, producer = make_service()
+        session.execute.side_effect = OperationalError("stmt", {}, Exception("down"))
+
+        with pytest.raises(OperationalError):
+            await service.get(UserGet(email="jane@example.com"))

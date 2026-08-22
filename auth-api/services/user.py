@@ -23,7 +23,7 @@ class UserService:
         self.producer = producer
 
     async def create(self, user_create: UserCreate) -> User:
-        password_hash = PasswordHandler.encrypt(user_create.password)
+        password_hash = await PasswordHandler.encrypt(user_create.password)
         new_user = User(
             email=user_create.email,
             first_name=user_create.first_name,
@@ -61,9 +61,7 @@ class UserService:
 
     async def login(self, user_login: UserLogin) -> str | None:
         try:
-            result = await self.session.execute(
-                select(User).where(User.email == user_login.email)
-            )
+            result = await self.session.execute(select(User).where(User.email == user_login.email))
             user = result.scalar_one_or_none()
         except OperationalError:
             logger.error(
@@ -77,12 +75,12 @@ class UserService:
         finally:
             logger.debug("Login lookup finished for %s", user_login.email)
 
-        if not user or not PasswordHandler.verify(user_login.password, user.password_hash):
+        if not user or not await PasswordHandler.verify(user_login.password, user.password_hash):
             return None
 
         await self._publish_event(EventType.USER_LOGGED_IN, user)
 
-        return jwt_handler.encode(
+        return await jwt_handler.encode(
             {
                 "sub": str(user.id),
                 "email": user.email,
@@ -91,7 +89,31 @@ class UserService:
             settings.jwt_secret_key,
         )
 
-    
+    async def get(self, user_get: UserGet) -> User | None:
+        if not user_get.id and not user_get.email:
+            raise ValueError("UserService.get requires id or email to look up a single user")
+
+        filters = [(User.id == user_get.id) if user_get.id else (User.email == user_get.email)]
+        if user_get.type:
+            filters.append(User.type == user_get.type)
+
+        try:
+            result = await self.session.execute(select(User).where(*filters))
+            user = result.scalar_one_or_none()
+        except OperationalError:
+            logger.error(
+                "Database unavailable while looking up user %s — safe to retry",
+                user_get,
+            )
+            raise
+        except Exception:
+            logger.exception("Failed to look up user %s", user_get)
+            raise
+        finally:
+            logger.debug("Get lookup finished for %s", user_get)
+
+        return user
+
     async def _publish_event(self, event_type: EventType, user: User) -> None:
         """A Kafka outage must never fail a request that already succeeded
         in the database — log and move on rather than let it propagate."""

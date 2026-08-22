@@ -12,10 +12,10 @@ def make_credentials(token: str) -> HTTPAuthorizationCredentials:
     return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
 
-def make_token(**claims) -> str:
+async def make_token(**claims) -> str:
     payload = {"sub": str(uuid4())}
     payload.update(claims)
-    return auth_module.jwt_handler.encode(payload, auth_module.settings.jwt_secret_key)
+    return await auth_module.jwt_handler.encode(payload, auth_module.settings.jwt_secret_key)
 
 
 def make_user(**overrides) -> User:
@@ -52,7 +52,7 @@ class TestGetCurrentUser:
 
     async def test_non_uuid_subject_raises_401(self):
         session = AsyncMock()
-        token = make_token(sub="not-a-uuid")
+        token = await make_token(sub="not-a-uuid")
 
         with pytest.raises(HTTPException) as exc_info:
             await auth_module.get_current_user(credentials=make_credentials(token), session=session)
@@ -63,7 +63,7 @@ class TestGetCurrentUser:
     async def test_user_no_longer_exists_raises_401(self):
         session = AsyncMock()
         session.get.return_value = None
-        token = make_token()
+        token = await make_token()
 
         with pytest.raises(HTTPException) as exc_info:
             await auth_module.get_current_user(credentials=make_credentials(token), session=session)
@@ -75,7 +75,7 @@ class TestGetCurrentUser:
         user = make_user()
         session = AsyncMock()
         session.get.return_value = user
-        token = make_token(sub=str(user.id))
+        token = await make_token(sub=str(user.id))
 
         result = await auth_module.get_current_user(
             credentials=make_credentials(token), session=session

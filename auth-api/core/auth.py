@@ -27,7 +27,7 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
     try:
-        payload = jwt_handler.decode(credentials.credentials, settings.jwt_secret_key)
+        payload = await jwt_handler.decode(credentials.credentials, settings.jwt_secret_key)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
