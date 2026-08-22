@@ -4,7 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import Date, DateTime, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
 
@@ -33,13 +33,6 @@ class Movie(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
-    )
-
-    # Many-to-many, via movie_showtimes: a movie can screen at multiple
-    # showtimes (e.g. the same movie playing in different rooms), and a
-    # showtime can screen multiple movies (e.g. a double feature).
-    showtimes: Mapped[list["Showtime"]] = relationship(
-        secondary="movie_api.movie_showtimes", back_populates="movies"
     )
 
     def __repr__(self) -> str:
@@ -85,10 +78,6 @@ class Showtime(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
-    )
-
-    movies: Mapped[list["Movie"]] = relationship(
-        secondary="movie_api.movie_showtimes", back_populates="showtimes"
     )
 
     def __repr__(self) -> str:

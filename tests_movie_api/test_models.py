@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import models
 from core.db.postgresql import Base as PostgresBase
-from models import Genre, Movie, MovieGenre, MovieShowtime, Showtime
+from models import Genre, Movie, MovieGenre, MovieShowtime, Showroom, Showtime
 
 
 def test_all_models_register_on_the_single_shared_base():
@@ -18,6 +18,7 @@ def test_all_models_register_on_the_single_shared_base():
         "movie_api.movies",
         "movie_api.movie_genres",
         "movie_api.movie_showtimes",
+        "movie_api.showrooms",
         "movie_api.showtimes",
     }
 
@@ -30,6 +31,7 @@ def test_all_timestamp_columns_are_timezone_aware():
         (Genre, "created_at"),
         (Movie, "created_at"),
         (Movie, "updated_at"),
+        (Showroom, "created_at"),
         (Showtime, "start_time"),
         (Showtime, "end_time"),
         (Showtime, "created_at"),
@@ -59,6 +61,17 @@ def make_movie(**overrides):
     )
     defaults.update(overrides)
     return Movie(**defaults)
+
+
+def make_showroom(**overrides):
+    defaults = dict(
+        id=uuid4(),
+        name="Room 1",
+        capacity=120,
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    defaults.update(overrides)
+    return Showroom(**defaults)
 
 
 def make_showtime(**overrides):
@@ -121,6 +134,26 @@ class TestMovie:
         assert "Inception" in str(movie)
 
 
+class TestShowroom:
+    def test_to_dict(self):
+        showroom = make_showroom()
+
+        assert showroom.to_dict() == {
+            "id": str(showroom.id),
+            "name": "Room 1",
+            "capacity": 120,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }
+
+    def test_repr_and_str_include_id_and_name(self):
+        showroom = make_showroom()
+
+        assert str(showroom.id) in repr(showroom)
+        assert "Room 1" in repr(showroom)
+        assert str(showroom.id) in str(showroom)
+        assert "Room 1" in str(showroom)
+
+
 class TestShowtime:
     def test_to_dict_shows_duration_instead_of_end_time(self):
         showtime = make_showtime()
@@ -147,34 +180,6 @@ class TestShowtime:
         assert str(showtime.id) in str(showtime)
 
 
-class TestMovieShowtimeRelationship:
-    def test_a_showtime_can_screen_multiple_movies(self):
-        """E.g. a double feature in the same room/slot."""
-        showtime = make_showtime()
-        first_movie = make_movie(title="Inception")
-        second_movie = make_movie(title="Interstellar")
-
-        showtime.movies.append(first_movie)
-        showtime.movies.append(second_movie)
-
-        assert list(showtime.movies) == [first_movie, second_movie]
-        assert showtime in first_movie.showtimes
-        assert showtime in second_movie.showtimes
-
-    def test_a_movie_can_screen_at_multiple_showtimes(self):
-        """E.g. the same movie playing in different rooms at once."""
-        movie = make_movie()
-        first_showtime = make_showtime()
-        second_showtime = make_showtime()
-
-        movie.showtimes.append(first_showtime)
-        movie.showtimes.append(second_showtime)
-
-        assert list(movie.showtimes) == [first_showtime, second_showtime]
-        assert movie in first_showtime.movies
-        assert movie in second_showtime.movies
-
-
 class TestMovieGenre:
     def test_to_dict(self):
         movie_id = uuid4()
@@ -195,19 +200,27 @@ class TestMovieGenre:
 
 
 class TestMovieShowtime:
-    def test_to_dict(self):
+    def test_to_dict_includes_the_showroom(self):
         movie_id = uuid4()
+        showroom_id = uuid4()
         showtime_id = uuid4()
-        link = MovieShowtime(movie_id=movie_id, showtime_id=showtime_id)
+        link = MovieShowtime(movie_id=movie_id, showroom_id=showroom_id, showtime_id=showtime_id)
 
-        assert link.to_dict() == {"movie_id": str(movie_id), "showtime_id": str(showtime_id)}
+        assert link.to_dict() == {
+            "movie_id": str(movie_id),
+            "showroom_id": str(showroom_id),
+            "showtime_id": str(showtime_id),
+        }
 
-    def test_repr_and_str_include_movie_id_and_showtime_id(self):
+    def test_repr_and_str_include_movie_showroom_and_showtime_ids(self):
         movie_id = uuid4()
+        showroom_id = uuid4()
         showtime_id = uuid4()
-        link = MovieShowtime(movie_id=movie_id, showtime_id=showtime_id)
+        link = MovieShowtime(movie_id=movie_id, showroom_id=showroom_id, showtime_id=showtime_id)
 
         assert str(movie_id) in repr(link)
+        assert str(showroom_id) in repr(link)
         assert str(showtime_id) in repr(link)
         assert str(movie_id) in str(link)
+        assert str(showroom_id) in str(link)
         assert str(showtime_id) in str(link)
