@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 
 class UserCreate(BaseModel):
     email: EmailStr
-    type: str | None = Field(default="client", pattern="^(admin|client)$")
+    type: str | None = Field(default="regular", pattern="^(admin|regular)$")
     first_name: str = Field(..., min_length=1, max_length=50)
     last_name: str = Field(..., min_length=1, max_length=50)
     password: str = Field(..., min_length=8, max_length=128)
@@ -17,7 +17,7 @@ class UserCreate(BaseModel):
                 "email": "user@example.com",
                 "first_name": "Jane",
                 "last_name": "Doe",
-                "type": "client",
+                "type": "regular",
                 "password": "StrongPassword123!",
             }
         }
@@ -69,13 +69,13 @@ class UserLogin(BaseModel):
 class UserGet(BaseModel):
     id: UUID | None = None
     email: EmailStr | None = None
-    type: str | None = Field(default=None, pattern="^(admin|client)$")
+    type: str | None = Field(default=None, pattern="^(admin|regular)$")
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "id": "123e4567-e89b-12d3-a456-426614174000",
                 "email": "user@example.com",
-                "type": "client",
+                "type": "regular",
             }
         }
     )
@@ -89,14 +89,14 @@ class UserGet(BaseModel):
 
 
 class UserList(BaseModel):
-    type: str | None = Field(default=None, pattern="^(admin|client)$")
+    type: str | None = Field(default=None, pattern="^(admin|regular)$")
     first_name: str | None = Field(default=None, min_length=1, max_length=50)
     last_name: str | None = Field(default=None, min_length=1, max_length=50)
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "type": "client",
+                "type": "regular",
                 "first_name": "Jane",
                 "last_name": "Doe",
             }
@@ -115,14 +115,14 @@ class UserUpdate(BaseModel):
     first_name: str | None = Field(default=None, min_length=1, max_length=50)
     last_name: str | None = Field(default=None, min_length=1, max_length=50)
     password: str | None = Field(default=None, min_length=8, max_length=128)
-    type: str | None = Field(default=None, pattern="^(admin|client)$")
+    type: str | None = Field(default=None, pattern="^(admin|regular)$")
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "first_name": "Jane",
                 "last_name": "Doe",
                 "password": "NewStrongPassword123!",
-                "type": "client",
+                "type": "regular",
             }
         }
     )

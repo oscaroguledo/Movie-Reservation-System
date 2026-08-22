@@ -13,7 +13,7 @@ class Base(DeclarativeBase):
 
 class UserType(str, enum.Enum):
     ADMIN = "admin"
-    CLIENT = "client"
+    REGULAR = "regular"
 
 
 class User(Base):
@@ -34,8 +34,8 @@ class User(Base):
             values_callable=lambda x: [e.value for e in x],
         ),
         nullable=False,
-        default=UserType.CLIENT,
-        server_default=UserType.CLIENT.value,
+        default=UserType.REGULAR,
+        server_default=UserType.REGULAR.value,
     )
     email: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
     first_name: Mapped[str] = mapped_column(String, nullable=False)

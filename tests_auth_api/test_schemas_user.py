@@ -22,9 +22,9 @@ class TestUserCreate:
             password=VALID_PASSWORD,
         )
 
-        assert user.type == "client"
+        assert user.type == "regular"
 
-    def test_defaults_type_to_client(self):
+    def test_defaults_type_to_regular(self):
         user = UserCreate(
             email="jane@example.com",
             first_name="Jane",
@@ -32,7 +32,7 @@ class TestUserCreate:
             password=VALID_PASSWORD,
         )
 
-        assert user.type == "client"
+        assert user.type == "regular"
 
     def test_rejects_invalid_type(self):
         with pytest.raises(ValidationError):

@@ -24,7 +24,7 @@ def make_user(**overrides) -> User:
         email="jane@example.com",
         first_name="Jane",
         last_name="Doe",
-        type=UserType.CLIENT,
+        type=UserType.REGULAR,
         password_hash="hashed",
     )
     defaults.update(overrides)
@@ -86,7 +86,7 @@ class TestGetCurrentUser:
 
 class TestRequireAdmin:
     async def test_rejects_non_admin_user(self):
-        user = make_user(type=UserType.CLIENT)
+        user = make_user(type=UserType.REGULAR)
 
         with pytest.raises(HTTPException) as exc_info:
             await auth_module.require_admin(user=user)

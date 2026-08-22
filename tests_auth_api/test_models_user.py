@@ -9,7 +9,7 @@ def make_user(**overrides):
         email="jane@example.com",
         first_name="Jane",
         last_name="Doe",
-        type=UserType.CLIENT,
+        type=UserType.REGULAR,
         password_hash="hashed",
     )
     defaults.update(overrides)
@@ -18,7 +18,7 @@ def make_user(**overrides):
 
 def test_user_type_values():
     assert UserType.ADMIN == "admin"
-    assert UserType.CLIENT == "client"
+    assert UserType.REGULAR == "regular"
 
 
 def test_to_dict_excludes_password_hash():

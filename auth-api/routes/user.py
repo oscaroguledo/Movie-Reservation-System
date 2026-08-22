@@ -149,7 +149,7 @@ async def get_user(
     user_service: UserService = Depends(get_user_service),
     current_user: User = Depends(get_current_user),
 ) -> APIResponse:
-    if current_user.type != UserType.ADMIN and user_get.type != UserType.CLIENT:
+    if current_user.type != UserType.ADMIN and user_get.type != UserType.REGULAR:
         response.status_code = 403
         return EResponse(message="Admin privileges required to access this resource", status=403)
     try:
@@ -177,7 +177,7 @@ async def list_users(
     user_service: UserService = Depends(get_user_service),
     current_user: User = Depends(get_current_user),
 ) -> APIResponse:
-    if current_user.type != UserType.ADMIN and user_list.type != UserType.CLIENT:
+    if current_user.type != UserType.ADMIN and user_list.type != UserType.REGULAR:
         response.status_code = 403
         return EResponse(message="Admin privileges required to access this resource", status=403)
     try:

@@ -28,7 +28,7 @@ class UserService:
             email=user_create.email,
             first_name=user_create.first_name,
             last_name=user_create.last_name,
-            type=UserType(user_create.type) if user_create.type else UserType.CLIENT,
+            type=UserType(user_create.type) if user_create.type else UserType.REGULAR,
             password_hash=password_hash,
         )
         try:

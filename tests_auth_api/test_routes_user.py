@@ -25,7 +25,7 @@ def make_user(**overrides) -> User:
         email="jane@example.com",
         first_name="Jane",
         last_name="Doe",
-        type=UserType.CLIENT,
+        type=UserType.REGULAR,
         password_hash="hashed",
     )
     defaults.update(overrides)
@@ -137,7 +137,7 @@ class TestRegisterAdmin:
                 "first_name": "Jane",
                 "last_name": "Doe",
                 "password": VALID_PASSWORD,
-                "type": "client",
+                "type": "regular",
             },
         )
 
@@ -344,16 +344,16 @@ class TestGetUser:
 
         assert response.status_code == 200
 
-    def test_non_admin_can_query_with_an_explicit_client_type_filter(self):
+    def test_non_admin_can_query_with_an_explicit_regular_type_filter(self):
         service = AsyncMock()
         service.get.return_value = make_user()
         client = make_client(service, current_user=make_user())
 
-        response = client.get("/", params={"email": "jane@example.com", "type": "client"})
+        response = client.get("/", params={"email": "jane@example.com", "type": "regular"})
 
         assert response.status_code == 200
 
-    def test_non_admin_without_a_client_type_filter_is_forbidden(self):
+    def test_non_admin_without_a_regular_type_filter_is_forbidden(self):
         service = AsyncMock()
         client = make_client(service, current_user=make_user())
 
@@ -401,16 +401,16 @@ class TestListUsers:
         assert response.status_code == 200
         assert len(response.json()["data"]) == 1
 
-    def test_non_admin_can_list_with_an_explicit_client_type_filter(self):
+    def test_non_admin_can_list_with_an_explicit_regular_type_filter(self):
         service = AsyncMock()
         service.list.return_value = [make_user()]
         client = make_client(service, current_user=make_user())
 
-        response = client.get("/users", params={"type": "client"})
+        response = client.get("/users", params={"type": "regular"})
 
         assert response.status_code == 200
 
-    def test_non_admin_without_a_client_type_filter_is_forbidden(self):
+    def test_non_admin_without_a_regular_type_filter_is_forbidden(self):
         service = AsyncMock()
         client = make_client(service, current_user=make_user())
 
@@ -424,7 +424,7 @@ class TestListUsers:
         service.list.return_value = []
         client = make_client(service, current_user=make_user(type=UserType.ADMIN))
 
-        response = client.get("/users", params={"type": "client", "limit": 5, "offset": 10})
+        response = client.get("/users", params={"type": "regular", "limit": 5, "offset": 10})
 
         assert response.status_code == 200
         _, kwargs = service.list.await_args
@@ -435,7 +435,7 @@ class TestListUsers:
         service.list.side_effect = OperationalError("stmt", {}, Exception("down"))
         client = make_client(service, current_user=make_user(type=UserType.ADMIN))
 
-        response = client.get("/users", params={"type": "client"})
+        response = client.get("/users", params={"type": "regular"})
 
         assert response.status_code == 503
 
@@ -444,7 +444,7 @@ class TestListUsers:
         service.list.side_effect = RuntimeError("boom")
         client = make_client(service, current_user=make_user(type=UserType.ADMIN))
 
-        response = client.get("/users", params={"type": "client"})
+        response = client.get("/users", params={"type": "regular"})
 
         assert response.status_code == 500
 

@@ -38,7 +38,7 @@ class TestCreate:
         encrypt.assert_called_once_with(VALID_PASSWORD)
         assert user.email == "jane@example.com"
         assert user.password_hash == "hashed"
-        assert user.type == UserType.CLIENT
+        assert user.type == UserType.REGULAR
         session.add.assert_called_once_with(user)
         session.commit.assert_awaited_once()
         session.refresh.assert_awaited_once_with(user)
@@ -95,7 +95,7 @@ class TestLogin:
             email="jane@example.com",
             first_name="Jane",
             last_name="Doe",
-            type=UserType.CLIENT,
+            type=UserType.REGULAR,
             password_hash="hashed",
         )
         defaults.update(overrides)
@@ -158,7 +158,7 @@ class TestGet:
             email="jane@example.com",
             first_name="Jane",
             last_name="Doe",
-            type=UserType.CLIENT,
+            type=UserType.REGULAR,
             password_hash="hashed",
         )
         defaults.update(overrides)
@@ -211,7 +211,7 @@ class TestList:
             email="jane@example.com",
             first_name="Jane",
             last_name="Doe",
-            type=UserType.CLIENT,
+            type=UserType.REGULAR,
             password_hash="hashed",
         )
         defaults.update(overrides)
@@ -222,7 +222,7 @@ class TestList:
         existing = self.make_existing_user()
         session.execute.return_value = MagicMock(scalars=lambda: MagicMock(all=lambda: [existing]))
 
-        users = await service.list(UserList(type="client"))
+        users = await service.list(UserList(type="regular"))
 
         assert users == [existing]
 
@@ -239,7 +239,7 @@ class TestList:
         service, session, producer = make_service()
         session.execute.return_value = MagicMock(scalars=lambda: MagicMock(all=lambda: []))
 
-        await service.list(UserList(type="client"), limit=5, offset=10)
+        await service.list(UserList(type="regular"), limit=5, offset=10)
 
         executed_query = session.execute.await_args.args[0]
         compiled = str(executed_query.compile(compile_kwargs={"literal_binds": True}))
@@ -259,7 +259,7 @@ class TestList:
         session.execute.side_effect = OperationalError("stmt", {}, Exception("down"))
 
         with pytest.raises(OperationalError):
-            await service.list(UserList(type="client"))
+            await service.list(UserList(type="regular"))
 
 
 class TestUpdate:
@@ -269,7 +269,7 @@ class TestUpdate:
             email="jane@example.com",
             first_name="Jane",
             last_name="Doe",
-            type=UserType.CLIENT,
+            type=UserType.REGULAR,
             password_hash="hashed",
         )
         defaults.update(overrides)
@@ -324,7 +324,7 @@ class TestUpdate:
         assert user.first_name == "Jane"
         assert user.last_name == "Doe"
         assert user.password_hash == "hashed"
-        assert user.type == UserType.CLIENT
+        assert user.type == UserType.REGULAR
 
     async def test_db_outage_rolls_back_and_reraises(self):
         service, session, producer = make_service()
@@ -345,7 +345,7 @@ class TestDelete:
             email="jane@example.com",
             first_name="Jane",
             last_name="Doe",
-            type=UserType.CLIENT,
+            type=UserType.REGULAR,
             password_hash="hashed",
         )
         defaults.update(overrides)
