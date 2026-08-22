@@ -22,12 +22,20 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: auth-api
+            config: pytest.ini
+          - service: movie_api
+            config: pytest-movie-api.ini
+          - service: reservation_api
+            config: pytest-reservation-api.ini
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-      - run: pip install -r auth-api/requirements.txt
-      - run: pytest -v
-      
+      - run: pip install -r ${{ matrix.service }}/requirements.txt
+      - run: pytest -v -c ${{ matrix.config }}
