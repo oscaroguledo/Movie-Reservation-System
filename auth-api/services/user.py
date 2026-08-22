@@ -173,6 +173,36 @@ class UserService:
 
         await self._publish_event(EventType.USER_UPDATED, user)
         return user
+    
+    async def delete(self, user_get: UserGet) -> bool:
+        try:
+            result = await self.session.execute(
+                select(User).where(
+                    (User.id == user_get.id) if user_get.id else (User.email == user_get.email)
+                )
+            )
+            user = result.scalar_one_or_none()
+            if not user:
+                return False
+
+            await self.session.delete(user)
+            await self.session.commit()
+        except OperationalError:
+            await self.session.rollback()
+            logger.error(
+                "Database unavailable while deleting user %s — safe to retry",
+                user_get.id or user_get.email,
+            )
+            raise
+        except Exception:
+            await self.session.rollback()
+            logger.exception("Failed to delete user %s", user_get.id or user_get.email)
+            raise
+        finally:
+            logger.debug("Delete attempt finished for user %s", user_get.id or user_get.email)
+
+        return True
+
 
     async def _publish_event(self, event_type: EventType, user: User) -> None:
         """A Kafka outage must never fail a request that already succeeded
