@@ -1,5 +1,6 @@
 import logging
 
+from core.config import get_settings
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
 
