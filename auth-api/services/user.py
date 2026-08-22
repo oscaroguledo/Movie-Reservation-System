@@ -1,0 +1,106 @@
+import logging
+from collections.abc import Sequence
+
+from core.config import get_settings
+from core.encryption import JWTHandler, PasswordHandler
+from core.events import TOPIC, Event, EventType
+from core.kafka import KafkaProducer
+from models.user import User, UserType
+from schemas.user import UserCreate, UserGet, UserList, UserLogin, UserUpdate
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
+
+settings = get_settings()
+jwt_handler = JWTHandler(default_expiration_minutes=settings.jwt_default_expiration_minutes)
+
+
+class UserService:
+    def __init__(self, session: AsyncSession, producer: KafkaProducer):
+        self.session = session
+        self.producer = producer
+
+    async def create(self, user_create: UserCreate) -> User:
+        password_hash = PasswordHandler.encrypt(user_create.password)
+        new_user = User(
+            email=user_create.email,
+            first_name=user_create.first_name,
+            last_name=user_create.last_name,
+            type=UserType(user_create.type) if user_create.type else UserType.CLIENT,
+            password_hash=password_hash,
+        )
+        try:
+            self.session.add(new_user)
+            await self.session.commit()
+            await self.session.refresh(new_user)
+        except IntegrityError as exc:
+            await self.session.rollback()
+            logger.warning(
+                "User creation failed due to conflict (email already exists): %s",
+                user_create.email,
+            )
+            raise ValueError("Email already registered") from exc
+        except OperationalError:
+            await self.session.rollback()
+            logger.error(
+                "Database unavailable while creating user %s — safe to retry",
+                user_create.email,
+            )
+            raise
+        except Exception:
+            await self.session.rollback()
+            logger.exception("Failed to create user %s", user_create.email)
+            raise
+        finally:
+            logger.debug("Create attempt finished for %s", user_create.email)
+
+        await self._publish_event(EventType.USER_CREATED, new_user)
+        return new_user
+
+    async def login(self, user_login: UserLogin) -> str | None:
+        try:
+            result = await self.session.execute(
+                select(User).where(User.email == user_login.email)
+            )
+            user = result.scalar_one_or_none()
+        except OperationalError:
+            logger.error(
+                "Database unavailable while looking up user %s — safe to retry",
+                user_login.email,
+            )
+            raise
+        except Exception:
+            logger.exception("Failed to look up user %s during login", user_login.email)
+            raise
+        finally:
+            logger.debug("Login lookup finished for %s", user_login.email)
+
+        if not user or not PasswordHandler.verify(user_login.password, user.password_hash):
+            return None
+
+        await self._publish_event(EventType.USER_LOGGED_IN, user)
+
+        return jwt_handler.encode(
+            {
+                "sub": str(user.id),
+                "email": user.email,
+                "type": user.type.value if isinstance(user.type, UserType) else user.type,
+            },
+            settings.jwt_secret_key,
+        )
+
+    
+    async def _publish_event(self, event_type: EventType, user: User) -> None:
+        """A Kafka outage must never fail a request that already succeeded
+        in the database — log and move on rather than let it propagate."""
+        try:
+            await self.producer.publish(
+                TOPIC,
+                Event(event_type=event_type, payload=user.to_dict()),
+            )
+        except Exception:
+            logger.exception("Failed to publish %s event for user %s", event_type, user.id)
+        finally:
+            logger.debug("Publish attempt finished for %s event (user %s)", event_type, user.id)
