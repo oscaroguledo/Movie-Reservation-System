@@ -92,12 +92,18 @@ class Showtime(Base):
     def __str__(self) -> str:
         return f"Showtime(id={self.id}, movie_id={self.movie_id}, start_time={self.start_time})"
 
+    @property
+    def duration_minutes(self) -> int:
+        """Derived from start_time/end_time rather than stored, so it can
+        never drift out of sync with the times actually persisted."""
+        return int((self.end_time - self.start_time).total_seconds() // 60)
+
     def to_dict(self) -> dict:
         return {
             "id": str(self.id),
             "movie_id": str(self.movie_id),
             "start_time": self.start_time.isoformat(),
-            "end_time": self.end_time.isoformat(),
+            "duration_minutes": self.duration_minutes,
             "price": float(self.price),
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),

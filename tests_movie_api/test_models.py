@@ -21,6 +21,24 @@ def test_all_models_register_on_the_single_shared_base():
     }
 
 
+def test_all_timestamp_columns_are_timezone_aware():
+    """Plain DateTime compiles to Postgres TIMESTAMP WITHOUT TIME ZONE;
+    every timestamp column must be DateTime(timezone=True) instead so
+    values round-trip correctly regardless of client/server timezone."""
+    timestamp_columns = [
+        (Genre, "created_at"),
+        (Movie, "created_at"),
+        (Movie, "updated_at"),
+        (Showtime, "start_time"),
+        (Showtime, "end_time"),
+        (Showtime, "created_at"),
+        (Showtime, "updated_at"),
+    ]
+    for model, column_name in timestamp_columns:
+        column = model.__table__.c[column_name]
+        assert column.type.timezone is True, f"{model.__name__}.{column_name} isn't tz-aware"
+
+
 def make_genre(**overrides):
     defaults = dict(id=uuid4(), name="Action", created_at=datetime(2026, 1, 1, tzinfo=timezone.utc))
     defaults.update(overrides)
@@ -104,14 +122,24 @@ class TestMovie:
 
 
 class TestShowtime:
-    def test_to_dict(self):
+    def test_to_dict_shows_duration_instead_of_end_time(self):
         showtime = make_showtime()
 
         data = showtime.to_dict()
 
         assert data["movie_id"] == str(showtime.movie_id)
         assert data["start_time"] == "2026-01-01T18:00:00+00:00"
+        assert data["duration_minutes"] == 150
         assert data["price"] == 12.50
+        assert "end_time" not in data
+
+    def test_duration_minutes_is_derived_from_start_and_end_time(self):
+        showtime = make_showtime(
+            start_time=datetime(2026, 1, 1, 18, 0, tzinfo=timezone.utc),
+            end_time=datetime(2026, 1, 1, 20, 15, tzinfo=timezone.utc),
+        )
+
+        assert showtime.duration_minutes == 135
 
     def test_repr_and_str_include_id_movie_id_and_start_time(self):
         showtime = make_showtime()

@@ -21,6 +21,15 @@ def test_user_type_values():
     assert UserType.REGULAR == "regular"
 
 
+def test_timestamp_columns_are_timezone_aware():
+    """Plain DateTime compiles to Postgres TIMESTAMP WITHOUT TIME ZONE;
+    these must be DateTime(timezone=True) so values round-trip correctly
+    regardless of client/server timezone."""
+    for column_name in ("created_at", "updated_at"):
+        column = User.__table__.c[column_name]
+        assert column.type.timezone is True, f"User.{column_name} isn't tz-aware"
+
+
 def test_to_dict_excludes_password_hash():
     user = make_user()
 
