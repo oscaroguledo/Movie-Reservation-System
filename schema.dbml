@@ -1,0 +1,93 @@
+// Movie Reservation System — current schema, reverse-engineered from the
+// SQLAlchemy models in auth-api/models and movie_api/models.
+
+Table auth_api.users {
+  id uuid [pk, default: `gen_random_uuid()`]
+  type user_type [not null, default: 'regular', note: 'enum: admin, regular']
+  email varchar [unique, not null]
+  first_name varchar [not null]
+  last_name varchar [not null]
+  password_hash varchar [not null]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+Table movie_api.genres {
+  id uuid [pk, default: `gen_random_uuid()`]
+  name varchar(100) [unique, not null]
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table movie_api.movies {
+  id uuid [pk, default: `gen_random_uuid()`]
+  title varchar(255) [not null]
+  description text [not null]
+  poster_image_url text [not null]
+  release_date date
+  duration_minutes integer
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  Indexes {
+    title
+  }
+}
+
+// Many-to-many junction table for Movies and Genres
+Table movie_api.movie_genres {
+  movie_id uuid [ref: > movie_api.movies.id, not null]
+  genre_id uuid [ref: > movie_api.genres.id, not null]
+
+  Indexes {
+    (movie_id, genre_id) [pk]
+  }
+}
+
+Table movie_api.showrooms {
+  id uuid [pk, default: `gen_random_uuid()`]
+  name varchar(50) [unique, not null]
+  capacity integer [not null]
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table movie_api.showroom_seats {
+  id uuid [pk, default: `gen_random_uuid()`]
+  showroom_id uuid [ref: > movie_api.showrooms.id, not null]
+  row varchar(5) [not null]
+  number integer [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  Indexes {
+    showroom_id
+    (showroom_id, row, number) [unique, note: 'a seat label is unique within its showroom, reusable across showrooms']
+  }
+}
+
+Table movie_api.showtimes {
+  id uuid [pk, default: `gen_random_uuid()`]
+  start_time timestamptz [not null]
+  end_time timestamptz [not null]
+  price numeric(10, 2) [not null]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+  note: 'duration_minutes is derived at the application layer from (end_time - start_time), not a stored column'
+
+  Indexes {
+    start_time
+  }
+}
+
+// Many-to-many junction table for Movies and Showtimes, pinned to the
+// showroom that particular screening takes place in — this is the actual
+// "screening" record (movie + room + time slot). A showtime can screen
+// multiple movies (e.g. a double feature) and a movie can screen at
+// multiple showtimes (e.g. playing in different rooms at once).
+Table movie_api.movie_showtimes {
+  movie_id uuid [ref: > movie_api.movies.id, not null]
+  showroom_id uuid [ref: > movie_api.showrooms.id, not null]
+  showtime_id uuid [ref: > movie_api.showtimes.id, not null]
+
+  Indexes {
+    (movie_id, showroom_id, showtime_id) [pk]
+  }
+}
