@@ -4,6 +4,14 @@ from schemas.user import UserCreate, UserGet, UserList, UserLogin, UserUpdate
 
 VALID_PASSWORD = "StrongPassw0rd!"
 
+WEAK_PASSWORDS = [
+    "short1!",  # too short
+    "alllowercase1!",  # no uppercase
+    "ALLUPPERCASE1!",  # no lowercase
+    "NoDigitsHere!",  # no digit
+    "NoSpecialChar123",  # no special character
+]
+
 
 class TestUserCreate:
     def test_accepts_a_valid_payload(self):
@@ -45,16 +53,7 @@ class TestUserCreate:
                 password=VALID_PASSWORD,
             )
 
-    @pytest.mark.parametrize(
-        "password",
-        [
-            "short1!",  # too short
-            "alllowercase1!",  # no uppercase
-            "ALLUPPERCASE1!",  # no lowercase
-            "NoDigitsHere!",  # no digit
-            "NoSpecialChar123",  # no special character
-        ],
-    )
+    @pytest.mark.parametrize("password", WEAK_PASSWORDS)
     def test_rejects_passwords_missing_a_complexity_rule(self, password):
         with pytest.raises(ValidationError):
             UserCreate(
@@ -68,9 +67,10 @@ class TestUserLogin:
 
         assert login.email == "jane@example.com"
 
-    def test_rejects_weak_password(self):
+    @pytest.mark.parametrize("password", WEAK_PASSWORDS)
+    def test_rejects_passwords_missing_a_complexity_rule(self, password):
         with pytest.raises(ValidationError):
-            UserLogin(email="jane@example.com", password="allweak")
+            UserLogin(email="jane@example.com", password=password)
 
 
 class TestUserGet:
@@ -105,9 +105,10 @@ class TestUserUpdate:
 
         assert update.password is None
 
-    def test_rejects_weak_password_when_provided(self):
+    @pytest.mark.parametrize("password", WEAK_PASSWORDS)
+    def test_rejects_passwords_missing_a_complexity_rule(self, password):
         with pytest.raises(ValidationError):
-            UserUpdate(password="allweak")
+            UserUpdate(password=password)
 
     def test_accepts_a_strong_password(self):
         update = UserUpdate(password=VALID_PASSWORD)

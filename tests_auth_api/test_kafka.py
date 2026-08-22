@@ -95,3 +95,10 @@ class TestKafkaConsumer:
         received_event = handler.await_args.args[0]
         assert received_event.event_id == event.event_id
         assert received_event.payload == event.payload
+
+    async def test_context_manager_starts_and_stops(self):
+        with patch("core.kafka.consumer.AIOKafkaConsumer") as mock_cls:
+            mock_cls.return_value = AsyncMock()
+            async with KafkaConsumer("users") as consumer:
+                consumer._consumer.start.assert_awaited_once()
+            consumer._consumer.stop.assert_awaited_once()
