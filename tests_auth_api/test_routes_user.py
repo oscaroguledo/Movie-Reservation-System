@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from core.auth import require_admin
+from core.auth import get_current_user, require_admin
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from models.user import User, UserType
@@ -32,12 +32,19 @@ def make_user(**overrides) -> User:
     return User(**defaults)
 
 
-def make_client(service: AsyncMock, *, admin_user: User | None = None) -> TestClient:
+def make_client(
+    service: AsyncMock,
+    *,
+    admin_user: User | None = None,
+    current_user: User | None = None,
+) -> TestClient:
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_user_service] = lambda: service
     if admin_user is not None:
         app.dependency_overrides[require_admin] = lambda: admin_user
+    if current_user is not None:
+        app.dependency_overrides[get_current_user] = lambda: current_user
     return TestClient(app)
 
 
@@ -282,3 +289,161 @@ class TestGetUserListQuery:
             get_user_list_query(type=None, first_name=None, last_name=None)
 
         assert exc_info.value.status_code == 422
+
+
+class TestGetMe:
+    def test_success_returns_the_current_users_details(self):
+        service = AsyncMock()
+        me = make_user()
+        service.get.return_value = me
+        client = make_client(service, current_user=me)
+
+        response = client.get("/me")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["data"]["email"] == "jane@example.com"
+        submitted_query = service.get.await_args.args[0]
+        assert submitted_query == UserGet(id=me.id, email=me.email)
+
+    def test_returns_404_when_user_no_longer_exists(self):
+        service = AsyncMock()
+        service.get.return_value = None
+        client = make_client(service, current_user=make_user())
+
+        response = client.get("/me")
+
+        assert response.status_code == 404
+
+    def test_db_outage_returns_503(self):
+        service = AsyncMock()
+        service.get.side_effect = OperationalError("stmt", {}, Exception("down"))
+        client = make_client(service, current_user=make_user())
+
+        response = client.get("/me")
+
+        assert response.status_code == 503
+
+    def test_unexpected_error_returns_500(self):
+        service = AsyncMock()
+        service.get.side_effect = RuntimeError("boom")
+        client = make_client(service, current_user=make_user())
+
+        response = client.get("/me")
+
+        assert response.status_code == 500
+
+
+class TestGetUser:
+    def test_admin_can_query_any_user(self):
+        service = AsyncMock()
+        service.get.return_value = make_user(type=UserType.ADMIN)
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.get("/", params={"email": "jane@example.com", "type": "admin"})
+
+        assert response.status_code == 200
+
+    def test_non_admin_can_query_with_an_explicit_client_type_filter(self):
+        service = AsyncMock()
+        service.get.return_value = make_user()
+        client = make_client(service, current_user=make_user())
+
+        response = client.get("/", params={"email": "jane@example.com", "type": "client"})
+
+        assert response.status_code == 200
+
+    def test_non_admin_without_a_client_type_filter_is_forbidden(self):
+        service = AsyncMock()
+        client = make_client(service, current_user=make_user())
+
+        response = client.get("/", params={"email": "jane@example.com"})
+
+        assert response.status_code == 403
+        service.get.assert_not_called()
+
+    def test_returns_404_when_not_found(self):
+        service = AsyncMock()
+        service.get.return_value = None
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.get("/", params={"email": "missing@example.com"})
+
+        assert response.status_code == 404
+
+    def test_db_outage_returns_503(self):
+        service = AsyncMock()
+        service.get.side_effect = OperationalError("stmt", {}, Exception("down"))
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.get("/", params={"email": "jane@example.com"})
+
+        assert response.status_code == 503
+
+    def test_unexpected_error_returns_500(self):
+        service = AsyncMock()
+        service.get.side_effect = RuntimeError("boom")
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.get("/", params={"email": "jane@example.com"})
+
+        assert response.status_code == 500
+
+
+class TestListUsers:
+    def test_admin_can_list_any_users(self):
+        service = AsyncMock()
+        service.list.return_value = [make_user(type=UserType.ADMIN)]
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.get("/users", params={"type": "admin"})
+
+        assert response.status_code == 200
+        assert len(response.json()["data"]) == 1
+
+    def test_non_admin_can_list_with_an_explicit_client_type_filter(self):
+        service = AsyncMock()
+        service.list.return_value = [make_user()]
+        client = make_client(service, current_user=make_user())
+
+        response = client.get("/users", params={"type": "client"})
+
+        assert response.status_code == 200
+
+    def test_non_admin_without_a_client_type_filter_is_forbidden(self):
+        service = AsyncMock()
+        client = make_client(service, current_user=make_user())
+
+        response = client.get("/users", params={"first_name": "Jane"})
+
+        assert response.status_code == 403
+        service.list.assert_not_called()
+
+    def test_passes_limit_and_offset_through(self):
+        service = AsyncMock()
+        service.list.return_value = []
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.get("/users", params={"type": "client", "limit": 5, "offset": 10})
+
+        assert response.status_code == 200
+        _, kwargs = service.list.await_args
+        assert kwargs == {"limit": 5, "offset": 10}
+
+    def test_db_outage_returns_503(self):
+        service = AsyncMock()
+        service.list.side_effect = OperationalError("stmt", {}, Exception("down"))
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.get("/users", params={"type": "client"})
+
+        assert response.status_code == 503
+
+    def test_unexpected_error_returns_500(self):
+        service = AsyncMock()
+        service.list.side_effect = RuntimeError("boom")
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.get("/users", params={"type": "client"})
+
+        assert response.status_code == 500

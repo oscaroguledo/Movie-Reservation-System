@@ -116,3 +116,75 @@ async def login(
 
     response.status_code = 200
     return SResponse(data={"token": token}, message="Login successful", status=200)
+
+@router.get("/me", response_model=APIResponse[dict])
+async def get_me(
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    user_service: UserService = Depends(get_user_service),
+) -> APIResponse:
+    try:
+        user = await user_service.get(UserGet(id=current_user.id, email=current_user.email))
+        if not user:
+            response.status_code = 404
+            return EResponse(message="User not found", status=404)
+    except OperationalError:
+        response.status_code = 503
+        return EResponse(message="Database unavailable, please try again later", status=503)
+    except Exception:
+        response.status_code = 500
+        return EResponse(message="Internal server error", status=500)
+
+    response.status_code = 200
+    return SResponse(data=user.to_dict(), message="User details retrieved", status=200)
+
+@router.get("/", response_model=APIResponse[dict])
+async def get_user(
+    response: Response,
+    user_get: UserGet = Depends(get_user_get_query),
+    user_service: UserService = Depends(get_user_service),
+    current_user: User = Depends(get_current_user),
+) -> APIResponse:
+    if current_user.type != UserType.ADMIN and user_get.type != UserType.CLIENT:
+        response.status_code = 403
+        return EResponse(message="Admin privileges required to access this resource", status=403)
+    try:
+        user = await user_service.get(user_get)
+        if not user:
+            response.status_code = 404
+            return EResponse(message="User not found", status=404)
+    except OperationalError:
+        response.status_code = 503
+        return EResponse(message="Database unavailable, please try again later", status=503)
+    except Exception:
+        response.status_code = 500
+        return EResponse(message="Internal server error", status=500)
+
+    response.status_code = 200
+    return SResponse(data=user.to_dict(), message="User details retrieved", status=200)
+
+@router.get("/users", response_model=APIResponse[list[dict]])
+async def list_users(
+    response: Response,
+    user_list: UserList = Depends(get_user_list_query),
+    limit: int = 100,
+    offset: int = 0,
+    user_service: UserService = Depends(get_user_service),
+    current_user: User = Depends(get_current_user),
+) -> APIResponse:
+    if current_user.type != UserType.ADMIN and user_list.type != UserType.CLIENT:
+        response.status_code = 403
+        return EResponse(message="Admin privileges required to access this resource", status=403)
+    try:
+        users = await user_service.list(user_list, limit=limit, offset=offset)
+    except OperationalError:
+        response.status_code = 503
+        return EResponse(message="Database unavailable, please try again later", status=503)
+    except Exception:
+        response.status_code = 500
+        return EResponse(message="Internal server error", status=500)
+
+    response.status_code = 200
+    return SResponse(
+        data=[user.to_dict() for user in users], message="User list retrieved", status=200
+    )
