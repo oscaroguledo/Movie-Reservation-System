@@ -247,3 +247,44 @@ async def update_user(
 
     response.status_code = 200
     return SResponse(data=updated.to_dict(), message="User updated", status=200)
+
+
+@router.delete("/users/{user_id}", response_model=APIResponse[dict])
+async def delete_user(
+    user_id: UUID,
+    response: Response,
+    user_service: UserService = Depends(get_user_service),
+    current_user: User = Depends(get_current_user),
+) -> APIResponse:
+    try:
+        target = await user_service.get(UserGet(id=user_id))
+    except OperationalError:
+        response.status_code = 503
+        return EResponse(message="Database unavailable, please try again later", status=503)
+    except Exception:
+        response.status_code = 500
+        return EResponse(message="Internal server error", status=500)
+
+    if not target:
+        response.status_code = 404
+        return EResponse(message="User not found", status=404)
+
+    if current_user.type != UserType.ADMIN and current_user.id != user_id:
+        response.status_code = 403
+        return EResponse(message="Admin privileges required to delete this user", status=403)
+
+    try:
+        deleted = await user_service.delete(UserGet(id=user_id))
+    except OperationalError:
+        response.status_code = 503
+        return EResponse(message="Database unavailable, please try again later", status=503)
+    except Exception:
+        response.status_code = 500
+        return EResponse(message="Internal server error", status=500)
+
+    if not deleted:
+        response.status_code = 404
+        return EResponse(message="User not found", status=404)
+
+    response.status_code = 200
+    return SResponse(data=None, message="User deleted", status=200)

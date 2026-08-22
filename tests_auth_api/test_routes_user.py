@@ -566,3 +566,101 @@ class TestUpdateUser:
         response = client.patch(f"/users/{target.id}", json={"first_name": "Janet"})
 
         assert response.status_code == 500
+
+
+class TestDeleteUser:
+    def test_admin_can_delete_another_user(self):
+        target = make_user()
+        service = AsyncMock()
+        service.get.return_value = target
+        service.delete.return_value = True
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.delete(f"/users/{target.id}")
+
+        assert response.status_code == 200
+        service.delete.assert_awaited_once()
+
+    def test_non_admin_can_delete_their_own_account(self):
+        me = make_user()
+        service = AsyncMock()
+        service.get.return_value = me
+        service.delete.return_value = True
+        client = make_client(service, current_user=me)
+
+        response = client.delete(f"/users/{me.id}")
+
+        assert response.status_code == 200
+
+    def test_non_admin_cannot_delete_another_user(self):
+        me = make_user()
+        someone_else = make_user(id=uuid4())
+        service = AsyncMock()
+        service.get.return_value = someone_else
+        client = make_client(service, current_user=me)
+
+        response = client.delete(f"/users/{someone_else.id}")
+
+        assert response.status_code == 403
+        service.delete.assert_not_called()
+
+    def test_returns_404_when_target_not_found(self):
+        service = AsyncMock()
+        service.get.return_value = None
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.delete(f"/users/{uuid4()}")
+
+        assert response.status_code == 404
+        service.delete.assert_not_called()
+
+    def test_returns_404_when_delete_finds_nothing_to_delete(self):
+        target = make_user()
+        service = AsyncMock()
+        service.get.return_value = target
+        service.delete.return_value = False
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.delete(f"/users/{target.id}")
+
+        assert response.status_code == 404
+
+    def test_db_outage_during_lookup_returns_503(self):
+        service = AsyncMock()
+        service.get.side_effect = OperationalError("stmt", {}, Exception("down"))
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.delete(f"/users/{uuid4()}")
+
+        assert response.status_code == 503
+
+    def test_unexpected_error_during_lookup_returns_500(self):
+        service = AsyncMock()
+        service.get.side_effect = RuntimeError("boom")
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.delete(f"/users/{uuid4()}")
+
+        assert response.status_code == 500
+
+    def test_db_outage_during_delete_returns_503(self):
+        target = make_user()
+        service = AsyncMock()
+        service.get.return_value = target
+        service.delete.side_effect = OperationalError("stmt", {}, Exception("down"))
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.delete(f"/users/{target.id}")
+
+        assert response.status_code == 503
+
+    def test_unexpected_error_during_delete_returns_500(self):
+        target = make_user()
+        service = AsyncMock()
+        service.get.return_value = target
+        service.delete.side_effect = RuntimeError("boom")
+        client = make_client(service, current_user=make_user(type=UserType.ADMIN))
+
+        response = client.delete(f"/users/{target.id}")
+
+        assert response.status_code == 500
