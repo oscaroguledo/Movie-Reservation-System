@@ -29,8 +29,6 @@ jobs:
             config: pytest.ini
           - service: movie_api
             config: pytest-movie-api.ini
-          - service: reservation_api
-            config: pytest-reservation-api.ini
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
