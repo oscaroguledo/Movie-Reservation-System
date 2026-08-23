@@ -4,7 +4,18 @@ from uuid import uuid4
 
 import models
 from core.db.postgresql import Base as PostgresBase
-from models import Genre, Movie, MovieGenre, MovieShowtime, Showroom, ShowroomSeat, Showtime
+from models import (
+    Genre,
+    Movie,
+    MovieGenre,
+    MovieShowtime,
+    Reservation,
+    ReservationStatus,
+    ReservationUserType,
+    Showroom,
+    ShowroomSeat,
+    Showtime,
+)
 
 
 def test_all_models_register_on_the_single_shared_base():
@@ -18,6 +29,7 @@ def test_all_models_register_on_the_single_shared_base():
         "movie_api.movies",
         "movie_api.movie_genres",
         "movie_api.movie_showtimes",
+        "movie_api.reservations",
         "movie_api.showrooms",
         "movie_api.showroom_seats",
         "movie_api.showtimes",
@@ -33,6 +45,9 @@ def test_all_timestamp_columns_are_timezone_aware():
         (Movie, "created_at"),
         (Movie, "updated_at"),
         (Showroom, "created_at"),
+        (Reservation, "expires_at"),
+        (Reservation, "created_at"),
+        (Reservation, "updated_at"),
         (Showtime, "start_time"),
         (Showtime, "end_time"),
         (Showtime, "created_at"),
@@ -85,6 +100,24 @@ def make_showroom_seat(**overrides):
     )
     defaults.update(overrides)
     return ShowroomSeat(**defaults)
+
+
+def make_reservation(**overrides):
+    defaults = dict(
+        id=uuid4(),
+        user_id=uuid4(),
+        user_type=ReservationUserType.REGULAR,
+        movie_id=uuid4(),
+        showroom_id=uuid4(),
+        showtime_id=uuid4(),
+        showroom_seat_id=uuid4(),
+        status=ReservationStatus.PENDING,
+        expires_at=datetime(2026, 1, 1, 18, 15, tzinfo=timezone.utc),
+        created_at=datetime(2026, 1, 1, 18, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 1, 1, 18, 0, tzinfo=timezone.utc),
+    )
+    defaults.update(overrides)
+    return Reservation(**defaults)
 
 
 def make_showtime(**overrides):
@@ -273,3 +306,89 @@ class TestMovieShowtime:
         assert str(movie_id) in str(link)
         assert str(showroom_id) in str(link)
         assert str(showtime_id) in str(link)
+
+
+class TestReservation:
+    def test_screening_is_a_composite_fk_into_movie_showtimes(self):
+        """A reservation's (movie_id, showroom_id, showtime_id) must
+        identify a real screening, not just three arbitrary UUIDs."""
+        (fk,) = [fk for fk in Reservation.__table__.foreign_key_constraints if len(fk.columns) == 3]
+        columns = tuple(c.name for c in fk.columns)
+        targets = tuple(e.column.table.fullname for e in fk.elements)
+
+        assert columns == ("movie_id", "showroom_id", "showtime_id")
+        assert targets == ("movie_api.movie_showtimes",) * 3
+
+    def test_showroom_seat_id_is_a_real_foreign_key(self):
+        fk_targets = {
+            fk.target_fullname
+            for fk in Reservation.__table__.foreign_keys
+            if fk.parent.name == "showroom_seat_id"
+        }
+        assert fk_targets == {"movie_api.showroom_seats.id"}
+
+    def test_active_reservations_cannot_double_book_the_same_seat(self):
+        """Only one pending/confirmed reservation may hold a given seat for
+        a given screening at a time — cancelled/expired ones don't count,
+        so the same seat can be re-reserved after a hold lapses."""
+        indexes = {idx.name: idx for idx in Reservation.__table__.indexes}
+        guard = indexes["uq_reservations_active_seat_per_screening"]
+
+        assert guard.unique is True
+        assert [c.name for c in guard.columns] == [
+            "movie_id",
+            "showroom_id",
+            "showtime_id",
+            "showroom_seat_id",
+        ]
+        where_clause = guard.dialect_options["postgresql"]["where"]
+        assert "pending" in str(where_clause)
+        assert "confirmed" in str(where_clause)
+
+    def test_defaults_to_pending_status(self):
+        reservation = make_reservation(status=ReservationStatus.PENDING)
+
+        assert reservation.status == ReservationStatus.PENDING
+
+    def test_to_dict(self):
+        reservation = make_reservation()
+
+        assert reservation.to_dict() == {
+            "id": str(reservation.id),
+            "user_id": str(reservation.user_id),
+            "user_type": "regular",
+            "movie_id": str(reservation.movie_id),
+            "showroom_id": str(reservation.showroom_id),
+            "showtime_id": str(reservation.showtime_id),
+            "showroom_seat_id": str(reservation.showroom_seat_id),
+            "status": "pending",
+            "expires_at": "2026-01-01T18:15:00+00:00",
+            "created_at": "2026-01-01T18:00:00+00:00",
+            "updated_at": "2026-01-01T18:00:00+00:00",
+        }
+
+    def test_to_dict_handles_no_expiry(self):
+        reservation = make_reservation(expires_at=None, status=ReservationStatus.CONFIRMED)
+
+        data = reservation.to_dict()
+
+        assert data["expires_at"] is None
+        assert data["status"] == "confirmed"
+
+    def test_guest_bookings_have_no_user_id(self):
+        """user_id is nullable specifically so GUEST bookings — made by
+        someone with no authenticated account — are representable."""
+        reservation = make_reservation(user_id=None, user_type=ReservationUserType.GUEST)
+
+        assert Reservation.__table__.c.user_id.nullable is True
+        assert reservation.to_dict()["user_id"] is None
+        assert reservation.to_dict()["user_type"] == "guest"
+
+    def test_repr_and_str_include_id_user_id_seat_and_status(self):
+        reservation = make_reservation()
+
+        assert str(reservation.id) in repr(reservation)
+        assert str(reservation.user_id) in repr(reservation)
+        assert str(reservation.showroom_seat_id) in repr(reservation)
+        assert str(reservation.id) in str(reservation)
+        assert str(reservation.user_id) in str(reservation)

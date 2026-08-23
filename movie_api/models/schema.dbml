@@ -80,3 +80,28 @@ Table movie_api.movie_showtimes {
     (movie_id, showroom_id, showtime_id) [pk]
   }
 }
+
+// A user's hold or booking on one seat for one screening. (movie_id,
+// showroom_id, showtime_id) together identify the screening via a
+// composite FK into movie_showtimes — see the Ref below, since DBML's
+// inline `ref:` only supports single-column references.
+Table movie_api.reservations {
+  id uuid [pk, default: `gen_random_uuid()`]
+  user_id uuid [note: 'auth_api.users.id — no DB-level FK (movie_api does not own that table); null for GUEST bookings']
+  user_type reservation_user_type [not null, note: 'enum: admin, regular, guest — snapshot of the booking role at reservation time']
+  movie_id uuid [not null]
+  showroom_id uuid [not null]
+  showtime_id uuid [not null]
+  showroom_seat_id uuid [ref: > movie_api.showroom_seats.id, not null]
+  status reservation_status [not null, default: 'pending', note: 'enum: pending, confirmed, cancelled, expired']
+  expires_at timestamptz [note: 'set for pending holds; see hold_ttl_seconds']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  Indexes {
+    user_id
+    (movie_id, showroom_id, showtime_id, showroom_seat_id) [unique, note: 'partial: WHERE status IN (pending, confirmed) — prevents double-booking an active seat, while letting it be re-reserved once a hold is cancelled/expires']
+  }
+}
+
+Ref: movie_api.reservations.(movie_id, showroom_id, showtime_id) > movie_api.movie_showtimes.(movie_id, showroom_id, showtime_id)
