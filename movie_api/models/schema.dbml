@@ -105,3 +105,20 @@ Table movie_api.reservations {
 }
 
 Ref: movie_api.reservations.(movie_id, showroom_id, showtime_id) > movie_api.movie_showtimes.(movie_id, showroom_id, showtime_id)
+
+// A payment attempt against one reservation. Not one-to-one — a
+// reservation can have multiple rows here (e.g. a failed attempt
+// followed by a successful retry).
+Table movie_api.payments {
+  id uuid [pk, default: `gen_random_uuid()`]
+  reservation_id uuid [ref: > movie_api.reservations.id, not null]
+  amount numeric(10, 2) [not null]
+  status payment_status [not null, default: 'pending', note: 'enum: pending, succeeded, failed, refunded']
+  provider_reference varchar(255) [note: 'the payment gateway transaction/intent id, for reconciliation; null until the gateway responds']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  Indexes {
+    reservation_id
+  }
+}

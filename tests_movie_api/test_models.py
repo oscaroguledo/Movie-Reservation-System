@@ -9,6 +9,8 @@ from models import (
     Movie,
     MovieGenre,
     MovieShowtime,
+    Payment,
+    PaymentStatus,
     Reservation,
     ReservationStatus,
     ReservationUserType,
@@ -29,6 +31,7 @@ def test_all_models_register_on_the_single_shared_base():
         "movie_api.movies",
         "movie_api.movie_genres",
         "movie_api.movie_showtimes",
+        "movie_api.payments",
         "movie_api.reservations",
         "movie_api.showrooms",
         "movie_api.showroom_seats",
@@ -45,6 +48,8 @@ def test_all_timestamp_columns_are_timezone_aware():
         (Movie, "created_at"),
         (Movie, "updated_at"),
         (Showroom, "created_at"),
+        (Payment, "created_at"),
+        (Payment, "updated_at"),
         (Reservation, "expires_at"),
         (Reservation, "created_at"),
         (Reservation, "updated_at"),
@@ -118,6 +123,20 @@ def make_reservation(**overrides):
     )
     defaults.update(overrides)
     return Reservation(**defaults)
+
+
+def make_payment(**overrides):
+    defaults = dict(
+        id=uuid4(),
+        reservation_id=uuid4(),
+        amount=Decimal("12.50"),
+        status=PaymentStatus.PENDING,
+        provider_reference=None,
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    defaults.update(overrides)
+    return Payment(**defaults)
 
 
 def make_showtime(**overrides):
@@ -392,3 +411,48 @@ class TestReservation:
         assert str(reservation.showroom_seat_id) in repr(reservation)
         assert str(reservation.id) in str(reservation)
         assert str(reservation.user_id) in str(reservation)
+
+
+class TestPayment:
+    def test_reservation_id_is_a_real_foreign_key(self):
+        fk_targets = {fk.target_fullname for fk in Payment.__table__.foreign_keys}
+        assert fk_targets == {"movie_api.reservations.id"}
+
+    def test_a_reservation_can_have_multiple_payment_attempts(self):
+        """Not a unique FK: a failed attempt followed by a successful
+        retry both belong to the same reservation."""
+        assert Payment.__table__.c.reservation_id.unique is not True
+
+    def test_defaults_to_pending_status(self):
+        payment = make_payment(status=PaymentStatus.PENDING)
+
+        assert payment.status == PaymentStatus.PENDING
+
+    def test_to_dict(self):
+        payment = make_payment()
+
+        assert payment.to_dict() == {
+            "id": str(payment.id),
+            "reservation_id": str(payment.reservation_id),
+            "amount": 12.50,
+            "status": "pending",
+            "provider_reference": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+
+    def test_to_dict_with_provider_reference(self):
+        payment = make_payment(status=PaymentStatus.SUCCEEDED, provider_reference="pi_abc123")
+
+        data = payment.to_dict()
+
+        assert data["status"] == "succeeded"
+        assert data["provider_reference"] == "pi_abc123"
+
+    def test_repr_and_str_include_id_reservation_id_and_status(self):
+        payment = make_payment()
+
+        assert str(payment.id) in repr(payment)
+        assert str(payment.reservation_id) in repr(payment)
+        assert str(payment.id) in str(payment)
+        assert str(payment.reservation_id) in str(payment)
