@@ -20,6 +20,14 @@ def test_genre_router_is_mounted():
     assert "/genres/{genre_id}" in paths
 
 
+def test_movie_router_is_mounted():
+    from main import app
+
+    paths = set(app.openapi()["paths"])
+    assert "/movies" in paths
+    assert "/movies/{movie_id}" in paths
+
+
 def test_module_settings_is_the_cached_settings_singleton():
     from core.config import get_settings
     from main import _settings

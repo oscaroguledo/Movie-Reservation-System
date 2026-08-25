@@ -49,8 +49,8 @@ class Movie(Base):
             "poster_image_url": self.poster_image_url,
             "release_date": self.release_date.isoformat() if self.release_date else None,
             "duration_minutes": self.duration_minutes,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
