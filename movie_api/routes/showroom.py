@@ -5,7 +5,7 @@ from core.db.postgresql import get_session
 from core.response import APIResponse, EResponse, SResponse
 from fastapi import APIRouter, Depends, Response
 from schemas.showroom import ShowroomCreate, ShowroomSeatBulkCreate, ShowroomUpdate
-from services.showroom import ShowroomService
+from movie_api.repository.showroom.postgresql import ShowroomService
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 

@@ -1,73 +1,92 @@
 import logging
-from collections.abc import Sequence
-from uuid import UUID
+from typing import Any
+from uuid import UUID, uuid4
 
-from models import Genre
+from core.db.postgresql import async_session_factory
+from core.events import TOPIC, Event, EventType
+from core.kafka import KafkaProducer
+from repository.genre.postgresql import GenrePostgresRepository
+from repository.genre.redis import GenreRedisRepository
 from schemas.genre import GenreCreate, GenreUpdate
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
 
 class GenreService:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    """Orchestrates the two repositories: reads check Redis first, falling
+    back to Postgres (and repopulating Redis) on a miss. Writes land in
+    Redis immediately — a read right after a write always sees it — then
+    an event is published for worker.py to persist durably to Postgres."""
 
-    async def create(self, genre_create: GenreCreate) -> Genre:
-        genre = Genre(name=genre_create.name)
-        try:
-            self.session.add(genre)
-            await self.session.commit()
-            await self.session.refresh(genre)
-        except IntegrityError as exc:
-            await self.session.rollback()
-            logger.warning("Genre creation failed due to conflict: %s", genre_create.name)
-            raise ValueError("Genre already exists") from exc
-        except OperationalError:
-            await self.session.rollback()
-            logger.error(
-                "Database unavailable while creating genre %s — safe to retry", genre_create.name
-            )
-            raise
+    def __init__(self, redis_repo: GenreRedisRepository, producer: KafkaProducer):
+        self.redis_repo = redis_repo
+        self.producer = producer
 
-        return genre
+    async def create(self, genre_create: GenreCreate) -> dict[str, Any]:
+        genre_id = uuid4()
+        if not await self.redis_repo.reserve_name(genre_create.name, genre_id):
+            raise ValueError("Genre already exists")
 
-    async def list(self) -> Sequence[Genre]:
-        result = await self.session.execute(select(Genre))
-        return result.scalars().all()
+        data = {"id": str(genre_id), "name": genre_create.name, "created_at": None}
+        await self.redis_repo.save(data)
+        await self.producer.publish(
+            TOPIC, Event(event_type=EventType.GENRE_CREATED, payload=data), key=str(genre_id)
+        )
+        return data
 
-    async def get(self, genre_id: UUID) -> Genre | None:
-        return await self.session.get(Genre, genre_id)
+    async def get(self, genre_id: UUID) -> dict[str, Any] | None:
+        cached = await self.redis_repo.get(genre_id)
+        if cached is not None:
+            return cached
 
-    async def update(self, genre_id: UUID, genre_update: GenreUpdate) -> Genre | None:
-        genre = await self.session.get(Genre, genre_id)
-        if genre is None:
+        async with async_session_factory() as session:
+            genre = await GenrePostgresRepository(session).get(genre_id)
+            if genre is None:
+                return None
+
+            data = genre.to_dict()
+            await self.redis_repo.save(data)
+            return data
+
+    async def list(self) -> list[dict[str, Any]]:
+        cached = await self.redis_repo.list()
+        if cached is not None:
+            return cached
+
+        async with async_session_factory() as session:
+            genres = await GenrePostgresRepository(session).get_all()
+            data = [genre.to_dict() for genre in genres]
+            for item in data:
+                await self.redis_repo.save(item)
+            return data
+
+    async def update(self, genre_id: UUID, genre_update: GenreUpdate) -> dict[str, Any] | None:
+        existing = await self.get(genre_id)
+        if existing is None:
             return None
 
-        genre.name = genre_update.name
-        try:
-            await self.session.commit()
-            await self.session.refresh(genre)
-        except IntegrityError as exc:
-            await self.session.rollback()
-            logger.warning("Genre update failed due to conflict: %s", genre_update.name)
-            raise ValueError("Genre already exists") from exc
-        except OperationalError:
-            await self.session.rollback()
-            logger.error(
-                "Database unavailable while updating genre %s — safe to retry", genre_id
-            )
-            raise
+        if existing["name"] != genre_update.name:
+            if not await self.redis_repo.reserve_name(genre_update.name, genre_id):
+                raise ValueError("Genre already exists")
+            await self.redis_repo.release_name(existing["name"])
 
-        return genre
+        updated = {**existing, "name": genre_update.name}
+        await self.redis_repo.save(updated)
+        await self.producer.publish(
+            TOPIC, Event(event_type=EventType.GENRE_UPDATED, payload=updated), key=str(genre_id)
+        )
+        return updated
 
     async def delete(self, genre_id: UUID) -> bool:
-        genre = await self.session.get(Genre, genre_id)
-        if genre is None:
+        existing = await self.get(genre_id)
+        if existing is None:
             return False
 
-        await self.session.delete(genre)
-        await self.session.commit()
+        await self.redis_repo.release_name(existing["name"])
+        await self.redis_repo.delete(genre_id)
+        await self.producer.publish(
+            TOPIC,
+            Event(event_type=EventType.GENRE_DELETED, payload={"id": str(genre_id)}),
+            key=str(genre_id),
+        )
         return True

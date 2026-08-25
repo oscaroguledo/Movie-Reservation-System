@@ -1,13 +1,18 @@
 import logging
-from collections.abc import Sequence
 from datetime import date, datetime, time, timezone
-from uuid import UUID
+from typing import Any
+from uuid import UUID, uuid4
 
-from models import Movie, MovieShowtime, Reservation, ReservationStatus, ShowroomSeat, Showtime
+from core.db.postgresql import async_session_factory
+from core.db.redis import redis_client
+from core.events import TOPIC, Event, EventType
+from core.kafka import KafkaProducer
+from repository.reservation.redis import ReservationRedisRepository
+from repository.screening.postgresql import ScreeningPostgresRepository
+from repository.screening.redis import ScreeningRedisRepository
 from schemas.screening import ScreeningCreate
-from sqlalchemy import and_, or_, select, text
-from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.ext.asyncio import AsyncSession
+from services.movie import MovieService
+from services.showroom import ShowroomService
 
 logger = logging.getLogger(__name__)
 
@@ -23,165 +28,190 @@ class ScreeningNotFoundError(ValueError):
 
 
 class ScreeningService:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    """Overlap prevention — the guarantee the Postgres advisory lock used
+    to give — is now a short-lived Redis lock (lock_schedule) around a
+    check-then-append against the showroom's own schedule, since the
+    durable write to Postgres no longer happens inside the request."""
 
-    async def schedule(self, screening_create: ScreeningCreate) -> MovieShowtime:
-        """Links a movie to a showroom at a time slot, rejecting any
-        overlap with another screening already scheduled in that room.
+    def __init__(
+        self,
+        redis_repo: ScreeningRedisRepository,
+        producer: KafkaProducer,
+        movie_service: MovieService,
+        showroom_service: ShowroomService,
+        reservation_redis_repo: ReservationRedisRepository,
+    ):
+        self.redis_repo = redis_repo
+        self.producer = producer
+        self.movie_service = movie_service
+        self.showroom_service = showroom_service
+        self.reservation_redis_repo = reservation_redis_repo
 
-        The time range lives on Showtime while the showroom lives on the
-        movie_showtimes junction, so a single-table EXCLUDE constraint
-        can't express "no overlapping screenings per showroom" — this
-        does it at the service layer instead. An advisory lock keyed by
-        showroom_id serializes concurrent scheduling attempts for the
-        same room within the transaction (released automatically at
-        commit/rollback), so the overlap check that follows can't race
-        with another request scheduling the same room.
-        """
+    async def schedule(self, screening_create: ScreeningCreate) -> dict[str, Any]:
         showroom_id = screening_create.showroom_id
+        movie_id = screening_create.movie_id
+        start_time = screening_create.start_time
+        end_time = screening_create.end_time
+
+        if not await self.redis_repo.lock_schedule(showroom_id):
+            # A concurrent scheduling attempt for this showroom is
+            # mid-flight — treat it the same as an overlap rather than
+            # let two requests race the check-then-append below.
+            raise OverlappingScreeningError(
+                "This showroom already has a screening scheduled in that time window"
+            )
 
         try:
-            await self.session.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext(:showroom_id))"),
-                {"showroom_id": str(showroom_id)},
+            schedule = await self.redis_repo.get_schedule(showroom_id)
+            for interval in schedule.values():
+                existing_start = datetime.fromisoformat(interval["start"])
+                existing_end = datetime.fromisoformat(interval["end"])
+                if existing_start < end_time and existing_end > start_time:
+                    raise OverlappingScreeningError(
+                        "This showroom already has a screening scheduled in that time window"
+                    )
+
+            showtime_id = uuid4()
+            await self.redis_repo.add_to_schedule(showroom_id, showtime_id, start_time, end_time)
+            await self.redis_repo.mark_screening(movie_id, showroom_id, showtime_id)
+
+            showtime_data = {
+                "id": str(showtime_id),
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
+                "price": str(screening_create.price),
+                "created_at": None,
+                "updated_at": None,
+            }
+            await self.redis_repo.save_showtime(showtime_data)
+            await self.redis_repo.add_to_date_index(
+                start_time.date().isoformat(), movie_id, showroom_id, showtime_id
+            )
+        finally:
+            await self.redis_repo.unlock_schedule(showroom_id)
+
+        data = {
+            "showtime_id": str(showtime_id),
+            "movie_id": str(movie_id),
+            "showroom_id": str(showroom_id),
+            **showtime_data,
+        }
+        await self.producer.publish(
+            TOPIC,
+            Event(event_type=EventType.SCREENING_SCHEDULED, payload=data),
+            key=str(showroom_id),
+        )
+        return data
+
+    async def get_showtime(self, showtime_id: UUID) -> dict[str, Any] | None:
+        cached = await self.redis_repo.get_showtime(showtime_id)
+        if cached is not None:
+            return cached
+
+        async with async_session_factory() as session:
+            showtime = await ScreeningPostgresRepository(session).get_showtime(showtime_id)
+            if showtime is None:
+                return None
+
+            data = showtime.to_dict()
+            await self.redis_repo.save_showtime(data)
+            return data
+
+    async def _screening_exists(
+        self, movie_id: UUID, showroom_id: UUID, showtime_id: UUID
+    ) -> bool:
+        if await self.redis_repo.screening_exists(movie_id, showroom_id, showtime_id):
+            return True
+
+        async with async_session_factory() as session:
+            return await ScreeningPostgresRepository(session).screening_exists(
+                movie_id, showroom_id, showtime_id
             )
 
-            overlap = await self.session.execute(
-                select(Showtime.id)
-                .join(MovieShowtime, MovieShowtime.showtime_id == Showtime.id)
-                .where(
-                    MovieShowtime.showroom_id == showroom_id,
-                    Showtime.start_time < screening_create.end_time,
-                    Showtime.end_time > screening_create.start_time,
+    async def list_for_date(self, on_date: date) -> list[dict[str, Any]]:
+        date_str = on_date.isoformat()
+        cached_index = await self.redis_repo.get_date_index(date_str)
+
+        if cached_index is None:
+            start_of_day = datetime.combine(on_date, time.min, tzinfo=timezone.utc)
+            end_of_day = datetime.combine(on_date, time.max, tzinfo=timezone.utc)
+            async with async_session_factory() as session:
+                rows = await ScreeningPostgresRepository(session).get_screenings_for_date(
+                    start_of_day, end_of_day
                 )
-            )
-            if overlap.first() is not None:
-                raise OverlappingScreeningError(
-                    "This showroom already has a screening scheduled in that time window"
+
+            results = []
+            for movie, showtime, showroom_id in rows:
+                await self.redis_repo.add_to_date_index(
+                    date_str, movie.id, showroom_id, showtime.id
                 )
+                await self.redis_repo.save_showtime(showtime.to_dict())
+                results.append(
+                    {
+                        "movie": movie.to_dict(),
+                        "showtime": showtime.to_dict(),
+                        "showroom_id": str(showroom_id),
+                    }
+                )
+            return results
 
-            showtime = Showtime(
-                start_time=screening_create.start_time,
-                end_time=screening_create.end_time,
-                price=screening_create.price,
-            )
-            self.session.add(showtime)
-            await self.session.flush()
+        results = []
+        for movie_id_str, showroom_id_str, showtime_id_str in cached_index:
+            movie = await self.movie_service.get(UUID(movie_id_str))
+            showtime = await self.get_showtime(UUID(showtime_id_str))
+            if movie is None or showtime is None:
+                continue
+            results.append({"movie": movie, "showtime": showtime, "showroom_id": showroom_id_str})
 
-            movie_showtime = MovieShowtime(
-                movie_id=screening_create.movie_id,
-                showroom_id=showroom_id,
-                showtime_id=showtime.id,
-            )
-            self.session.add(movie_showtime)
-            await self.session.commit()
-        except OverlappingScreeningError:
-            await self.session.rollback()
-            raise
-        except IntegrityError as exc:
-            await self.session.rollback()
-            raise ValueError("movie_id or showroom_id does not exist") from exc
-        except OperationalError:
-            await self.session.rollback()
-            logger.error("Database unavailable while scheduling a screening — safe to retry")
-            raise
-
-        return movie_showtime
-
-    async def list_for_date(self, on_date: date) -> Sequence[tuple[Movie, Showtime, UUID]]:
-        start_of_day = datetime.combine(on_date, time.min, tzinfo=timezone.utc)
-        end_of_day = datetime.combine(on_date, time.max, tzinfo=timezone.utc)
-
-        try:
-            result = await self.session.execute(
-                select(Movie, Showtime, MovieShowtime.showroom_id)
-                .join(MovieShowtime, MovieShowtime.movie_id == Movie.id)
-                .join(Showtime, Showtime.id == MovieShowtime.showtime_id)
-                .where(Showtime.start_time >= start_of_day, Showtime.start_time <= end_of_day)
-                .order_by(Showtime.start_time)
-            )
-        except OperationalError:
-            logger.error("Database unavailable while listing screenings — safe to retry")
-            raise
-
-        return result.all()
+        return sorted(results, key=lambda item: item["showtime"]["start_time"])
 
     async def delete(self, movie_id: UUID, showroom_id: UUID, showtime_id: UUID) -> bool:
-        # Only the junction row is removed — Showtime itself may still be
-        # shared by another screening (e.g. a double feature in the same
-        # room and slot), so it isn't touched here.
-        movie_showtime = await self.session.get(
-            MovieShowtime,
-            {"movie_id": movie_id, "showroom_id": showroom_id, "showtime_id": showtime_id},
-        )
-        if movie_showtime is None:
+        if not await self._screening_exists(movie_id, showroom_id, showtime_id):
             return False
 
-        try:
-            await self.session.delete(movie_showtime)
-            await self.session.commit()
-        except IntegrityError as exc:
-            await self.session.rollback()
-            raise ValueError("Cannot delete a screening with active reservations") from exc
-        except OperationalError:
-            await self.session.rollback()
-            logger.error("Database unavailable while deleting a screening — safe to retry")
-            raise
+        # Best-effort guard: refuse to unschedule a screening that still
+        # has an active seat hold/booking against it.
+        async for _ in redis_client.scan_iter(match=f"screening_seat:{showtime_id}:*", count=50):
+            raise ValueError("Cannot delete a screening with active reservations")
 
+        await self.redis_repo.unmark_screening(movie_id, showroom_id, showtime_id)
+        await self.redis_repo.remove_from_schedule(showroom_id, showtime_id)
+        await self.producer.publish(
+            TOPIC,
+            Event(
+                event_type=EventType.SCREENING_DELETED,
+                payload={
+                    "movie_id": str(movie_id),
+                    "showroom_id": str(showroom_id),
+                    "showtime_id": str(showtime_id),
+                },
+            ),
+            key=str(showroom_id),
+        )
         return True
 
     async def seat_map(
         self, movie_id: UUID, showroom_id: UUID, showtime_id: UUID
-    ) -> list[dict]:
-        """Every seat in the showroom, each labeled available/held/booked
-        for this specific screening. A PENDING reservation only counts as
-        held while its hold hasn't expired yet — the same lazy-expiry
-        rule ReservationService applies, so a stale un-swept hold never
-        shows a seat as unavailable when it's actually free again.
-        """
-        try:
-            screening = await self.session.get(
-                MovieShowtime,
-                {"movie_id": movie_id, "showroom_id": showroom_id, "showtime_id": showtime_id},
-            )
-            if screening is None:
-                raise ScreeningNotFoundError("Screening not found")
+    ) -> list[dict[str, Any]]:
+        """A PENDING hold only counts as 'held' while its seat lock is
+        still present — Redis's own TTL on that key is what makes a
+        stale, unswept hold disappear on its own."""
+        if not await self._screening_exists(movie_id, showroom_id, showtime_id):
+            raise ScreeningNotFoundError("Screening not found")
 
-            seats_result = await self.session.execute(
-                select(ShowroomSeat)
-                .where(ShowroomSeat.showroom_id == showroom_id)
-                .order_by(ShowroomSeat.row, ShowroomSeat.number)
-            )
-            active_result = await self.session.execute(
-                select(Reservation.showroom_seat_id, Reservation.status).where(
-                    Reservation.movie_id == movie_id,
-                    Reservation.showroom_id == showroom_id,
-                    Reservation.showtime_id == showtime_id,
-                    or_(
-                        Reservation.status == ReservationStatus.CONFIRMED,
-                        and_(
-                            Reservation.status == ReservationStatus.PENDING,
-                            Reservation.expires_at > datetime.now(timezone.utc),
-                        ),
-                    ),
-                )
-            )
-        except OperationalError:
-            logger.error("Database unavailable while building the seat map — safe to retry")
-            raise
-
-        status_by_seat_id = dict(active_result.all())
-
+        seats = await self.showroom_service.list_seats(showroom_id)
         seat_map = []
-        for seat in seats_result.scalars().all():
-            reservation_status = status_by_seat_id.get(seat.id)
-            if reservation_status == ReservationStatus.CONFIRMED:
-                seat_status = "booked"
-            elif reservation_status == ReservationStatus.PENDING:
-                seat_status = "held"
+        for seat in seats:
+            holder_id = await self.reservation_redis_repo.get_seat_holder(
+                showtime_id, UUID(seat["id"])
+            )
+            if holder_id is None:
+                status = "available"
             else:
-                seat_status = "available"
-            seat_map.append({**seat.to_dict(), "status": seat_status})
+                reservation = await self.reservation_redis_repo.get(UUID(holder_id))
+                status = (
+                    "booked" if reservation and reservation["status"] == "confirmed" else "held"
+                )
+            seat_map.append({**seat, "status": status})
 
         return seat_map

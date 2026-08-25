@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.screening import ScreeningNotFoundError
+from movie_api.repository.screening.postgresql import ScreeningNotFoundError
 
 logger = logging.getLogger(__name__)
 

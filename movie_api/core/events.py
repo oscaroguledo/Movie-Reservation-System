@@ -10,11 +10,33 @@ TOPIC = "movies"
 
 
 class EventType(str, Enum):
-    """Every event type movie-api can publish or consume."""
+    """Every event type movie-api can publish or consume.
+
+    Each one is the durability half of a write: the service layer writes
+    the change to Redis synchronously (so reads reflect it immediately),
+    publishes the matching event here, and worker.py — the sole writer to
+    Postgres — persists it durably on consumption.
+    """
+
+    GENRE_CREATED = "genre.created"
+    GENRE_UPDATED = "genre.updated"
+    GENRE_DELETED = "genre.deleted"
 
     MOVIE_CREATED = "movie.created"
-    MOVIE_DELETED = "movie.deleted"
     MOVIE_UPDATED = "movie.updated"
+    MOVIE_DELETED = "movie.deleted"
+
+    SHOWROOM_CREATED = "showroom.created"
+    SHOWROOM_UPDATED = "showroom.updated"
+    SHOWROOM_DELETED = "showroom.deleted"
+    SHOWROOM_SEATS_CREATED = "showroom.seats_created"
+
+    SCREENING_SCHEDULED = "screening.scheduled"
+    SCREENING_DELETED = "screening.deleted"
+
+    RESERVATION_CREATED = "reservation.created"
+    RESERVATION_CONFIRMED = "reservation.confirmed"
+    RESERVATION_CANCELLED = "reservation.cancelled"
 
 
 class Event(BaseModel):

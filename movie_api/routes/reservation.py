@@ -5,7 +5,7 @@ from core.db.postgresql import get_session
 from core.response import APIResponse, EResponse, SResponse
 from fastapi import APIRouter, Depends, Response
 from schemas.reservation import ReservationCreate
-from services.reservation import NotAuthorizedError, ReservationService, SeatUnavailableError
+from movie_api.repository.reservation.postgresql import NotAuthorizedError, ReservationService, SeatUnavailableError
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 

@@ -1,19 +1,20 @@
 import logging
-from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
-from uuid import UUID
+from typing import Any
+from uuid import UUID, uuid4
 
 from core.auth import Principal
 from core.config import get_settings
-from core.db.redis import redis_client
-from models import Reservation, ReservationStatus, ReservationUserType, Showtime
+from core.db.postgresql import async_session_factory
+from core.events import TOPIC, Event, EventType
+from core.kafka import KafkaProducer
+from models import ReservationStatus, ReservationUserType
+from repository.reservation.postgresql import ReservationPostgresRepository
+from repository.reservation.redis import ReservationRedisRepository
 from schemas.reservation import ReservationCreate
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.ext.asyncio import AsyncSession
+from services.screening import ScreeningService
 
 logger = logging.getLogger(__name__)
-
 settings = get_settings()
 
 
@@ -27,171 +28,165 @@ class NotAuthorizedError(Exception):
     that isn't theirs (and they aren't an admin)."""
 
 
-def _seat_lock_key(showtime_id: UUID, showroom_seat_id: UUID) -> str:
-    return f"lock:seat:{showtime_id}:{showroom_seat_id}"
-
-
 class ReservationService:
     """Implements the hold/confirm/cancel flow from reservation
-    lifecycle.png: a Redis lock is a fast-fail optimization tried before
-    the DB write, but the actual overbooking guarantee is the partial
-    unique index on Reservation (movie_id, showroom_id, showtime_id,
-    showroom_seat_id) WHERE status IN ('pending', 'confirmed') — a
-    failed Redis lock or a stale one both still leave that index as the
-    final word on whether a seat is free.
-    """
+    lifecycle.png, now Redis-first: acquire_seat's SETNX is the actual
+    overbooking guarantee (previously the Postgres partial unique index
+    played that role) — Postgres is written to asynchronously by
+    worker.py, purely for durable history/reporting."""
 
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    def __init__(
+        self,
+        redis_repo: ReservationRedisRepository,
+        producer: KafkaProducer,
+        screening_service: ScreeningService,
+    ):
+        self.redis_repo = redis_repo
+        self.producer = producer
+        self.screening_service = screening_service
 
     async def create_hold(
         self, principal: Principal, reservation_create: ReservationCreate
-    ) -> Sequence[Reservation]:
+    ) -> list[dict[str, Any]]:
         showtime_id = reservation_create.showtime_id
         seat_ids = reservation_create.showroom_seat_ids
-        acquired_keys: list[str] = []
+        reservation_ids = [uuid4() for _ in seat_ids]
+        acquired: list[UUID] = []
 
-        try:
-            for seat_id in seat_ids:
-                key = _seat_lock_key(showtime_id, seat_id)
-                got_lock = await redis_client.set(
-                    key, "1", nx=True, px=settings.hold_ttl_seconds * 1000
-                )
-                if not got_lock:
-                    raise SeatUnavailableError(
-                        "One or more selected seats are no longer available"
-                    )
-                acquired_keys.append(key)
+        for seat_id, reservation_id in zip(seat_ids, reservation_ids, strict=True):
+            got = await self.redis_repo.acquire_seat(showtime_id, seat_id, reservation_id)
+            if not got:
+                for released_seat_id in acquired:
+                    await self.redis_repo.release_seat(showtime_id, released_seat_id)
+                raise SeatUnavailableError("One or more selected seats are no longer available")
+            acquired.append(seat_id)
 
-            expires_at = datetime.now(timezone.utc) + timedelta(
-                seconds=settings.hold_ttl_seconds
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=settings.hold_ttl_seconds)
+
+        reservations = []
+        for seat_id, reservation_id in zip(seat_ids, reservation_ids, strict=True):
+            data = {
+                "id": str(reservation_id),
+                "user_id": str(principal.user_id) if principal.user_id else None,
+                "user_type": principal.type.value,
+                "movie_id": str(reservation_create.movie_id),
+                "showroom_id": str(reservation_create.showroom_id),
+                "showtime_id": str(showtime_id),
+                "showroom_seat_id": str(seat_id),
+                "status": ReservationStatus.PENDING.value,
+                "expires_at": expires_at.isoformat(),
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            }
+            await self.redis_repo.save(data)
+            reservations.append(data)
+            await self.producer.publish(
+                TOPIC,
+                Event(event_type=EventType.RESERVATION_CREATED, payload=data),
+                key=str(reservation_id),
             )
-            reservations = [
-                Reservation(
-                    user_id=principal.user_id,
-                    user_type=principal.type,
-                    movie_id=reservation_create.movie_id,
-                    showroom_id=reservation_create.showroom_id,
-                    showtime_id=showtime_id,
-                    showroom_seat_id=seat_id,
-                    status=ReservationStatus.PENDING,
-                    expires_at=expires_at,
-                )
-                for seat_id in seat_ids
-            ]
-            self.session.add_all(reservations)
-            await self.session.commit()
-            for reservation in reservations:
-                await self.session.refresh(reservation)
-        except SeatUnavailableError:
-            if acquired_keys:
-                await redis_client.delete(*acquired_keys)
-            raise
-        except IntegrityError as exc:
-            await self.session.rollback()
-            if acquired_keys:
-                await redis_client.delete(*acquired_keys)
-            raise SeatUnavailableError(
-                "One or more selected seats are no longer available"
-            ) from exc
-        except OperationalError:
-            await self.session.rollback()
-            if acquired_keys:
-                await redis_client.delete(*acquired_keys)
-            logger.error(
-                "Database unavailable while creating a reservation hold — safe to retry"
-            )
-            raise
 
         return reservations
 
-    async def confirm(self, reservation_id: UUID) -> Reservation | None:
-        reservation = await self.session.get(Reservation, reservation_id)
+    async def _get_and_maybe_expire(self, reservation_id: UUID) -> dict[str, Any] | None:
+        data = await self.redis_repo.get(reservation_id)
+        if data is None:
+            async with async_session_factory() as session:
+                reservation = await ReservationPostgresRepository(session).get(reservation_id)
+                if reservation is None:
+                    return None
+                data = reservation.to_dict()
+                await self.redis_repo.save(data)
+
+        if data["status"] == ReservationStatus.PENDING.value and data["expires_at"]:
+            expires_at = datetime.fromisoformat(data["expires_at"])
+            if expires_at < datetime.now(timezone.utc):
+                # Lazy expiry: the seat lock's own TTL has likely already
+                # freed the seat in Redis, but the reservation record
+                # itself needs its status settled too so it doesn't read
+                # as an active PENDING hold in history/admin views.
+                data["status"] = ReservationStatus.EXPIRED.value
+                data["expires_at"] = None
+                await self.redis_repo.save(data)
+                await self.redis_repo.release_seat(
+                    UUID(data["showtime_id"]), UUID(data["showroom_seat_id"])
+                )
+
+        return data
+
+    async def get(self, reservation_id: UUID) -> dict[str, Any] | None:
+        return await self._get_and_maybe_expire(reservation_id)
+
+    async def confirm(self, reservation_id: UUID) -> dict[str, Any] | None:
+        reservation = await self._get_and_maybe_expire(reservation_id)
         if reservation is None:
             return None
 
-        if reservation.status != ReservationStatus.PENDING:
+        if reservation["status"] == ReservationStatus.EXPIRED.value:
+            raise ValueError("This hold has expired")
+        if reservation["status"] != ReservationStatus.PENDING.value:
             raise ValueError("Only a pending reservation can be confirmed")
 
-        if reservation.expires_at is not None and reservation.expires_at < datetime.now(
-            timezone.utc
-        ):
-            # Lazy expiry: the sweep hasn't touched this row yet, but it's
-            # already past its hold window — settle it now rather than
-            # letting a stale PENDING status get confirmed.
-            reservation.status = ReservationStatus.EXPIRED
-            await self.session.commit()
-            raise ValueError("This hold has expired")
-
-        reservation.status = ReservationStatus.CONFIRMED
-        reservation.expires_at = None
-
-        try:
-            await self.session.commit()
-            await self.session.refresh(reservation)
-        except OperationalError:
-            await self.session.rollback()
-            logger.error(
-                "Database unavailable while confirming reservation %s — safe to retry",
-                reservation_id,
-            )
-            raise
-
-        # The seat is now durably booked via the unique index — the Redis
-        # hold lock has done its job and can be freed early rather than
-        # waiting out its TTL.
-        await redis_client.delete(
-            _seat_lock_key(reservation.showtime_id, reservation.showroom_seat_id)
+        reservation["status"] = ReservationStatus.CONFIRMED.value
+        reservation["expires_at"] = None
+        reservation["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await self.redis_repo.save(reservation)
+        # The seat is now durably held via Redis with no TTL — the hold
+        # has done its job, so its expiry is removed rather than left to
+        # tick down toward a booking that's already confirmed.
+        await self.redis_repo.persist_seat(
+            UUID(reservation["showtime_id"]), UUID(reservation["showroom_seat_id"])
         )
-
+        await self.producer.publish(
+            TOPIC,
+            Event(event_type=EventType.RESERVATION_CONFIRMED, payload=reservation),
+            key=str(reservation_id),
+        )
         return reservation
 
-    async def cancel(self, principal: Principal, reservation_id: UUID) -> Reservation | None:
-        reservation = await self.session.get(Reservation, reservation_id)
+    async def cancel(self, principal: Principal, reservation_id: UUID) -> dict[str, Any] | None:
+        reservation = await self._get_and_maybe_expire(reservation_id)
         if reservation is None:
             return None
 
-        is_owner = principal.user_id is not None and principal.user_id == reservation.user_id
+        reservation_user_id = reservation.get("user_id")
+        is_owner = principal.user_id is not None and reservation_user_id == str(
+            principal.user_id
+        )
         is_admin = principal.type == ReservationUserType.ADMIN
         if not (is_owner or is_admin):
             raise NotAuthorizedError("Not authorized to cancel this reservation")
 
-        if reservation.status not in (ReservationStatus.PENDING, ReservationStatus.CONFIRMED):
+        if reservation["status"] not in (
+            ReservationStatus.PENDING.value,
+            ReservationStatus.CONFIRMED.value,
+        ):
             raise ValueError("Only a pending or confirmed reservation can be cancelled")
 
-        showtime = await self.session.get(Showtime, reservation.showtime_id)
-        if showtime is not None and showtime.start_time <= datetime.now(timezone.utc):
-            raise ValueError("Cannot cancel a reservation for a screening that already started")
+        showtime = await self.screening_service.get_showtime(UUID(reservation["showtime_id"]))
+        if showtime is not None:
+            start_time = datetime.fromisoformat(showtime["start_time"])
+            if start_time <= datetime.now(timezone.utc):
+                raise ValueError(
+                    "Cannot cancel a reservation for a screening that already started"
+                )
 
-        reservation.status = ReservationStatus.CANCELLED
-        reservation.expires_at = None
-
-        try:
-            await self.session.commit()
-            await self.session.refresh(reservation)
-        except OperationalError:
-            await self.session.rollback()
-            logger.error(
-                "Database unavailable while cancelling reservation %s — safe to retry",
-                reservation_id,
-            )
-            raise
-
-        await redis_client.delete(
-            _seat_lock_key(reservation.showtime_id, reservation.showroom_seat_id)
+        reservation["status"] = ReservationStatus.CANCELLED.value
+        reservation["expires_at"] = None
+        reservation["updated_at"] = datetime.now(timezone.utc).isoformat()
+        await self.redis_repo.save(reservation)
+        await self.redis_repo.release_seat(
+            UUID(reservation["showtime_id"]), UUID(reservation["showroom_seat_id"])
         )
-
+        await self.producer.publish(
+            TOPIC,
+            Event(event_type=EventType.RESERVATION_CANCELLED, payload=reservation),
+            key=str(reservation_id),
+        )
         return reservation
 
-    async def list_for_principal(self, principal: Principal) -> Sequence[Reservation]:
-        try:
-            result = await self.session.execute(
-                select(Reservation)
-                .where(Reservation.user_id == principal.user_id)
-                .order_by(Reservation.created_at.desc())
-            )
-        except OperationalError:
-            logger.error("Database unavailable while listing reservations — safe to retry")
-            raise
-
-        return result.scalars().all()
+    async def list_for_principal(self, principal: Principal) -> list[dict[str, Any]]:
+        if principal.user_id is None:
+            return []
+        return await self.redis_repo.list_for_user(principal.user_id)

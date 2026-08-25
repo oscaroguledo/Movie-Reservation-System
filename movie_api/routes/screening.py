@@ -6,7 +6,7 @@ from core.db.postgresql import get_session
 from core.response import APIResponse, EResponse, SResponse
 from fastapi import APIRouter, Depends, Response
 from schemas.screening import ScreeningCreate
-from services.screening import (
+from movie_api.repository.screening.postgresql import (
     OverlappingScreeningError,
     ScreeningNotFoundError,
     ScreeningService,
