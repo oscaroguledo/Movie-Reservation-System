@@ -15,6 +15,8 @@ class Settings(BaseSettings):
 
     postgres_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/movie_reservation"
 
+    redis_url: str = "redis://localhost:6379/0"
+
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_client_id: str = "movie-api"
     kafka_consumer_group_id: str = "movie-api"
