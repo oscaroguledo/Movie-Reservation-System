@@ -38,13 +38,17 @@ async def get_current_principal(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired"
         ) from exc
     except jwt.InvalidTokenError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
+        ) from exc
 
     try:
         user_id = UUID(payload["sub"])
         user_type = ReservationUserType(payload["type"])
     except (KeyError, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
+        ) from exc
 
     return Principal(user_id=user_id, type=user_type)
 

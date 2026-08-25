@@ -34,5 +34,5 @@ class Genre(Base):
         return {
             "id": str(self.id),
             "name": self.name,
-            "created_at": self.created_at.isoformat(),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }
