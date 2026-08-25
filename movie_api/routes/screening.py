@@ -6,7 +6,11 @@ from core.db.postgresql import get_session
 from core.response import APIResponse, EResponse, SResponse
 from fastapi import APIRouter, Depends, Response
 from schemas.screening import ScreeningCreate
-from services.screening import OverlappingScreeningError, ScreeningService
+from services.screening import (
+    OverlappingScreeningError,
+    ScreeningNotFoundError,
+    ScreeningService,
+)
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -88,3 +92,26 @@ async def delete_screening(
         return EResponse(message="Screening not found", status=404)
 
     return SResponse(data=None, message="Screening deleted", status=200)
+
+
+@router.get(
+    "/screenings/{movie_id}/{showroom_id}/{showtime_id}/seats",
+    response_model=APIResponse[list[dict]],
+)
+async def get_seat_map(
+    movie_id: UUID,
+    showroom_id: UUID,
+    showtime_id: UUID,
+    response: Response,
+    screening_service: ScreeningService = Depends(get_screening_service),
+) -> APIResponse:
+    try:
+        seat_map = await screening_service.seat_map(movie_id, showroom_id, showtime_id)
+    except ScreeningNotFoundError as exc:
+        response.status_code = 404
+        return EResponse(message=str(exc), status=404)
+    except OperationalError:
+        response.status_code = 503
+        return EResponse(message="Database unavailable, please try again later", status=503)
+
+    return SResponse(data=seat_map, message="Seat map retrieved", status=200)

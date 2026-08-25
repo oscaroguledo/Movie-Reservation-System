@@ -34,6 +34,7 @@ def test_showroom_router_is_mounted():
     paths = set(app.openapi()["paths"])
     assert "/showrooms" in paths
     assert "/showrooms/{showroom_id}" in paths
+    assert "/showrooms/{showroom_id}/seats" in paths
 
 
 def test_screening_router_is_mounted():
@@ -42,6 +43,7 @@ def test_screening_router_is_mounted():
     paths = set(app.openapi()["paths"])
     assert "/screenings" in paths
     assert "/screenings/{movie_id}/{showroom_id}/{showtime_id}" in paths
+    assert "/screenings/{movie_id}/{showroom_id}/{showtime_id}/seats" in paths
 
 
 def test_reservation_router_is_mounted():

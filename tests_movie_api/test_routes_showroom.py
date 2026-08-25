@@ -4,7 +4,7 @@ from uuid import uuid4
 from core.auth import Principal, require_admin
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from models import ReservationUserType, Showroom
+from models import ReservationUserType, Showroom, ShowroomSeat
 from routes.showroom import get_showroom_service, router
 from sqlalchemy.exc import OperationalError
 
@@ -13,6 +13,12 @@ def make_showroom(**overrides):
     defaults = dict(id=uuid4(), name="Room 1", capacity=120)
     defaults.update(overrides)
     return Showroom(**defaults)
+
+
+def make_showroom_seat(**overrides):
+    defaults = dict(id=uuid4(), showroom_id=uuid4(), row="A", number=1)
+    defaults.update(overrides)
+    return ShowroomSeat(**defaults)
 
 
 def make_client(service: AsyncMock, *, as_admin: bool = False) -> TestClient:
@@ -211,6 +217,74 @@ class TestDeleteShowroom:
         client = make_client(service, as_admin=True)
 
         response = client.delete(f"/showrooms/{uuid4()}")
+
+        assert response.status_code == 503
+
+
+class TestCreateShowroomSeats:
+    def test_admin_can_create_seats(self):
+        service = AsyncMock()
+        service.bulk_create_seats.return_value = [make_showroom_seat()]
+        client = make_client(service, as_admin=True)
+
+        response = client.post(
+            f"/showrooms/{uuid4()}/seats", json={"rows": ["A"], "seats_per_row": 10}
+        )
+
+        assert response.status_code == 201
+        assert len(response.json()["data"]) == 1
+
+    def test_non_admin_is_forbidden(self):
+        service = AsyncMock()
+        client = make_client(service, as_admin=False)
+
+        response = client.post(
+            f"/showrooms/{uuid4()}/seats", json={"rows": ["A"], "seats_per_row": 10}
+        )
+
+        assert response.status_code == 403
+        service.bulk_create_seats.assert_not_called()
+
+    def test_duplicate_seats_returns_409(self):
+        service = AsyncMock()
+        service.bulk_create_seats.side_effect = ValueError("One or more seats already exist")
+        client = make_client(service, as_admin=True)
+
+        response = client.post(
+            f"/showrooms/{uuid4()}/seats", json={"rows": ["A"], "seats_per_row": 10}
+        )
+
+        assert response.status_code == 409
+
+    def test_db_outage_returns_503(self):
+        service = AsyncMock()
+        service.bulk_create_seats.side_effect = OperationalError("stmt", {}, Exception("down"))
+        client = make_client(service, as_admin=True)
+
+        response = client.post(
+            f"/showrooms/{uuid4()}/seats", json={"rows": ["A"], "seats_per_row": 10}
+        )
+
+        assert response.status_code == 503
+
+
+class TestListShowroomSeats:
+    def test_returns_seats_without_authentication(self):
+        service = AsyncMock()
+        service.list_seats.return_value = [make_showroom_seat()]
+        client = make_client(service)
+
+        response = client.get(f"/showrooms/{uuid4()}/seats")
+
+        assert response.status_code == 200
+        assert len(response.json()["data"]) == 1
+
+    def test_db_outage_returns_503(self):
+        service = AsyncMock()
+        service.list_seats.side_effect = OperationalError("stmt", {}, Exception("down"))
+        client = make_client(service)
+
+        response = client.get(f"/showrooms/{uuid4()}/seats")
 
         assert response.status_code == 503
 

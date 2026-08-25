@@ -1,6 +1,6 @@
 import pytest
 from pydantic import ValidationError
-from schemas.showroom import ShowroomCreate, ShowroomUpdate
+from schemas.showroom import ShowroomCreate, ShowroomSeatBulkCreate, ShowroomUpdate
 
 
 class TestShowroomCreate:
@@ -29,3 +29,23 @@ class TestShowroomUpdate:
     def test_rejects_a_non_positive_capacity(self):
         with pytest.raises(ValidationError):
             ShowroomUpdate(capacity=-1)
+
+
+class TestShowroomSeatBulkCreate:
+    def test_accepts_valid_fields(self):
+        bulk = ShowroomSeatBulkCreate(rows=["A", "B"], seats_per_row=10)
+
+        assert bulk.rows == ["A", "B"]
+        assert bulk.seats_per_row == 10
+
+    def test_rejects_an_empty_rows_list(self):
+        with pytest.raises(ValidationError):
+            ShowroomSeatBulkCreate(rows=[], seats_per_row=10)
+
+    def test_rejects_a_non_positive_seats_per_row(self):
+        with pytest.raises(ValidationError):
+            ShowroomSeatBulkCreate(rows=["A"], seats_per_row=0)
+
+    def test_rejects_an_overly_long_row_label(self):
+        with pytest.raises(ValidationError):
+            ShowroomSeatBulkCreate(rows=["TOOLONG"], seats_per_row=10)

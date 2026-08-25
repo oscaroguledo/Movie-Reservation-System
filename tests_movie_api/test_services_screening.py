@@ -3,9 +3,13 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
-from models import Movie, MovieShowtime, Showtime
+from models import Movie, MovieShowtime, ReservationStatus, ShowroomSeat, Showtime
 from schemas.screening import ScreeningCreate
-from services.screening import OverlappingScreeningError, ScreeningService
+from services.screening import (
+    OverlappingScreeningError,
+    ScreeningNotFoundError,
+    ScreeningService,
+)
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 
@@ -163,3 +167,46 @@ class TestDelete:
             await service.delete(uuid4(), uuid4(), uuid4())
 
         session.rollback.assert_awaited_once()
+
+
+class TestSeatMap:
+    async def test_raises_when_screening_not_found(self):
+        service, session = make_service()
+        session.get.return_value = None
+
+        with pytest.raises(ScreeningNotFoundError):
+            await service.seat_map(uuid4(), uuid4(), uuid4())
+
+    async def test_marks_seats_available_held_and_booked(self):
+        service, session = make_service()
+        session.get.return_value = object()  # the MovieShowtime row
+        seat_available = ShowroomSeat(id=uuid4(), showroom_id=uuid4(), row="A", number=1)
+        seat_held = ShowroomSeat(id=uuid4(), showroom_id=uuid4(), row="A", number=2)
+        seat_booked = ShowroomSeat(id=uuid4(), showroom_id=uuid4(), row="A", number=3)
+        session.execute.side_effect = [
+            MagicMock(
+                scalars=lambda: MagicMock(
+                    all=lambda: [seat_available, seat_held, seat_booked]
+                )
+            ),
+            MagicMock(
+                all=lambda: [
+                    (seat_held.id, ReservationStatus.PENDING),
+                    (seat_booked.id, ReservationStatus.CONFIRMED),
+                ]
+            ),
+        ]
+
+        seat_map = await service.seat_map(uuid4(), uuid4(), uuid4())
+
+        by_id = {seat["id"]: seat["status"] for seat in seat_map}
+        assert by_id[str(seat_available.id)] == "available"
+        assert by_id[str(seat_held.id)] == "held"
+        assert by_id[str(seat_booked.id)] == "booked"
+
+    async def test_db_outage_reraises(self):
+        service, session = make_service()
+        session.get.side_effect = OperationalError("stmt", {}, Exception("down"))
+
+        with pytest.raises(OperationalError):
+            await service.seat_map(uuid4(), uuid4(), uuid4())

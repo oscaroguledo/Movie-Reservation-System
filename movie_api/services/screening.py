@@ -3,9 +3,9 @@ from collections.abc import Sequence
 from datetime import date, datetime, time, timezone
 from uuid import UUID
 
-from models import Movie, MovieShowtime, Showtime
+from models import Movie, MovieShowtime, Reservation, ReservationStatus, ShowroomSeat, Showtime
 from schemas.screening import ScreeningCreate
-from sqlalchemy import select, text
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 class OverlappingScreeningError(ValueError):
     """Raised when a showroom already has a screening scheduled that
     overlaps the requested time window."""
+
+
+class ScreeningNotFoundError(ValueError):
+    """Raised when the requested movie+showroom+showtime combination
+    isn't an actual scheduled screening."""
 
 
 class ScreeningService:
@@ -125,3 +130,58 @@ class ScreeningService:
             raise
 
         return True
+
+    async def seat_map(
+        self, movie_id: UUID, showroom_id: UUID, showtime_id: UUID
+    ) -> list[dict]:
+        """Every seat in the showroom, each labeled available/held/booked
+        for this specific screening. A PENDING reservation only counts as
+        held while its hold hasn't expired yet — the same lazy-expiry
+        rule ReservationService applies, so a stale un-swept hold never
+        shows a seat as unavailable when it's actually free again.
+        """
+        try:
+            screening = await self.session.get(
+                MovieShowtime,
+                {"movie_id": movie_id, "showroom_id": showroom_id, "showtime_id": showtime_id},
+            )
+            if screening is None:
+                raise ScreeningNotFoundError("Screening not found")
+
+            seats_result = await self.session.execute(
+                select(ShowroomSeat)
+                .where(ShowroomSeat.showroom_id == showroom_id)
+                .order_by(ShowroomSeat.row, ShowroomSeat.number)
+            )
+            active_result = await self.session.execute(
+                select(Reservation.showroom_seat_id, Reservation.status).where(
+                    Reservation.movie_id == movie_id,
+                    Reservation.showroom_id == showroom_id,
+                    Reservation.showtime_id == showtime_id,
+                    or_(
+                        Reservation.status == ReservationStatus.CONFIRMED,
+                        and_(
+                            Reservation.status == ReservationStatus.PENDING,
+                            Reservation.expires_at > datetime.now(timezone.utc),
+                        ),
+                    ),
+                )
+            )
+        except OperationalError:
+            logger.error("Database unavailable while building the seat map — safe to retry")
+            raise
+
+        status_by_seat_id = dict(active_result.all())
+
+        seat_map = []
+        for seat in seats_result.scalars().all():
+            reservation_status = status_by_seat_id.get(seat.id)
+            if reservation_status == ReservationStatus.CONFIRMED:
+                seat_status = "booked"
+            elif reservation_status == ReservationStatus.PENDING:
+                seat_status = "held"
+            else:
+                seat_status = "available"
+            seat_map.append({**seat.to_dict(), "status": seat_status})
+
+        return seat_map

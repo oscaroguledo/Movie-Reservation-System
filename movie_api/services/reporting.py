@@ -7,14 +7,11 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.screening import ScreeningNotFoundError
+
 logger = logging.getLogger(__name__)
 
 _ACTIVE_STATUSES = (ReservationStatus.PENDING, ReservationStatus.CONFIRMED)
-
-
-class ScreeningNotFoundError(ValueError):
-    """Raised when the requested movie+showroom+showtime combination
-    isn't an actual scheduled screening."""
 
 
 class ReportingService:

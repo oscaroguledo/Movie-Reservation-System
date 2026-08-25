@@ -10,7 +10,8 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 def make_service():
     session = AsyncMock()
-    session.add = MagicMock()  # AsyncSession.add() is synchronous, unlike the rest of the API
+    session.add = MagicMock()  # AsyncSession.add()/add_all() are synchronous, unlike the rest
+    session.add_all = MagicMock()
     return ShowroomService(session=session), session
 
 
@@ -186,3 +187,61 @@ class TestDelete:
             await service.delete(existing.id)
 
         session.rollback.assert_awaited_once()
+
+
+class TestBulkCreateSeats:
+    async def test_creates_a_seat_for_every_row_number_combination(self):
+        service, session = make_service()
+        showroom_id = uuid4()
+
+        seats = await service.bulk_create_seats(showroom_id, ["A", "B"], 3)
+
+        assert len(seats) == 6
+        assert {(seat.row, seat.number) for seat in seats} == {
+            ("A", 1),
+            ("A", 2),
+            ("A", 3),
+            ("B", 1),
+            ("B", 2),
+            ("B", 3),
+        }
+        assert all(seat.showroom_id == showroom_id for seat in seats)
+        session.add_all.assert_called_once_with(seats)
+        session.commit.assert_awaited_once()
+
+    async def test_duplicate_seats_roll_back_and_raise_value_error(self):
+        service, session = make_service()
+        session.commit.side_effect = IntegrityError("stmt", {}, Exception("dup"))
+
+        with pytest.raises(ValueError, match="already exist"):
+            await service.bulk_create_seats(uuid4(), ["A"], 5)
+
+        session.rollback.assert_awaited_once()
+
+    async def test_db_outage_rolls_back_and_reraises(self):
+        service, session = make_service()
+        session.commit.side_effect = OperationalError("stmt", {}, Exception("down"))
+
+        with pytest.raises(OperationalError):
+            await service.bulk_create_seats(uuid4(), ["A"], 5)
+
+        session.rollback.assert_awaited_once()
+
+
+class TestListSeats:
+    async def test_returns_seats_for_the_showroom(self):
+        service, session = make_service()
+        showroom_id = uuid4()
+        session.execute.return_value = MagicMock(scalars=lambda: MagicMock(all=lambda: []))
+
+        seats = await service.list_seats(showroom_id)
+
+        assert seats == []
+        session.execute.assert_awaited_once()
+
+    async def test_db_outage_reraises(self):
+        service, session = make_service()
+        session.execute.side_effect = OperationalError("stmt", {}, Exception("down"))
+
+        with pytest.raises(OperationalError):
+            await service.list_seats(uuid4())

@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from models import Movie, MovieShowtime, ReservationUserType, Showtime
 from routes.screening import get_screening_service, router
-from services.screening import OverlappingScreeningError
+from services.screening import OverlappingScreeningError, ScreeningNotFoundError
 from sqlalchemy.exc import OperationalError
 
 
@@ -162,6 +162,38 @@ class TestDeleteScreening:
         client = make_client(service, as_admin=True)
 
         response = client.delete(f"/screenings/{uuid4()}/{uuid4()}/{uuid4()}")
+
+        assert response.status_code == 503
+
+
+class TestGetSeatMap:
+    def test_returns_the_seat_map_without_authentication(self):
+        service = AsyncMock()
+        service.seat_map.return_value = [
+            {"id": str(uuid4()), "row": "A", "number": 1, "status": "available"}
+        ]
+        client = make_client(service)
+
+        response = client.get(f"/screenings/{uuid4()}/{uuid4()}/{uuid4()}/seats")
+
+        assert response.status_code == 200
+        assert response.json()["data"][0]["status"] == "available"
+
+    def test_returns_404_when_screening_not_found(self):
+        service = AsyncMock()
+        service.seat_map.side_effect = ScreeningNotFoundError("Screening not found")
+        client = make_client(service)
+
+        response = client.get(f"/screenings/{uuid4()}/{uuid4()}/{uuid4()}/seats")
+
+        assert response.status_code == 404
+
+    def test_db_outage_returns_503(self):
+        service = AsyncMock()
+        service.seat_map.side_effect = OperationalError("stmt", {}, Exception("down"))
+        client = make_client(service)
+
+        response = client.get(f"/screenings/{uuid4()}/{uuid4()}/{uuid4()}/seats")
 
         assert response.status_code == 503
 
