@@ -46,6 +46,20 @@ class MovieService:
 
         return movie
 
+    async def get(self, movie_id: UUID) -> Movie | None:
+        return await self.session.get(Movie, movie_id)
+
+    async def get_genre_ids(self, movie_id: UUID) -> list[UUID]:
+        # Defined before list() below: a return annotation is evaluated
+        # against the class body's own namespace at class-definition time,
+        # so once list() exists as a method here, a later `list[UUID]`
+        # annotation would resolve to that method instead of the builtin
+        # and blow up with "'function' object is not subscriptable".
+        result = await self.session.execute(
+            select(MovieGenre.genre_id).where(MovieGenre.movie_id == movie_id)
+        )
+        return list(result.scalars().all())
+
     async def list(self, genre_id: UUID | None = None) -> Sequence[Movie]:
         query = select(Movie)
         if genre_id is not None:
@@ -60,15 +74,6 @@ class MovieService:
             raise
 
         return result.scalars().all()
-
-    async def get(self, movie_id: UUID) -> Movie | None:
-        return await self.session.get(Movie, movie_id)
-
-    async def get_genre_ids(self, movie_id: UUID) -> list[UUID]:
-        result = await self.session.execute(
-            select(MovieGenre.genre_id).where(MovieGenre.movie_id == movie_id)
-        )
-        return list(result.scalars().all())
 
     async def update(self, movie_id: UUID, movie_update: MovieUpdate) -> Movie | None:
         movie = await self.session.get(Movie, movie_id)
