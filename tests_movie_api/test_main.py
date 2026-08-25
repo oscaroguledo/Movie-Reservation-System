@@ -44,6 +44,15 @@ def test_screening_router_is_mounted():
     assert "/screenings/{movie_id}/{showroom_id}/{showtime_id}" in paths
 
 
+def test_reservation_router_is_mounted():
+    from main import app
+
+    paths = set(app.openapi()["paths"])
+    assert "/reservations" in paths
+    assert "/reservations/{reservation_id}/confirm" in paths
+    assert "/reservations/{reservation_id}/cancel" in paths
+
+
 def test_module_settings_is_the_cached_settings_singleton():
     from core.config import get_settings
     from main import _settings

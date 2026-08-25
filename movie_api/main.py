@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
 from routes.genre import router as genre_router
 from routes.movie import router as movie_router
+from routes.reservation import router as reservation_router
 from routes.screening import router as screening_router
 from routes.showroom import router as showroom_router
 
@@ -29,6 +30,7 @@ app.include_router(genre_router)
 app.include_router(movie_router)
 app.include_router(showroom_router)
 app.include_router(screening_router)
+app.include_router(reservation_router)
 
 if __name__ == "__main__":
     import uvicorn

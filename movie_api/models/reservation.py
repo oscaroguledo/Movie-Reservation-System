@@ -128,6 +128,6 @@ class Reservation(Base):
             "showroom_seat_id": str(self.showroom_seat_id),
             "status": self.status.value if isinstance(self.status, enum.Enum) else self.status,
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
