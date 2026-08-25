@@ -7,6 +7,7 @@ def test_default_values_ignore_any_real_env_file():
     assert settings.service_name == "movie-api"
     assert settings.log_level == "INFO"
     assert settings.movie_api_port == 8001
+    assert settings.hold_ttl_seconds == 30
     assert settings.postgres_url.startswith("postgresql+asyncpg://")
     assert settings.kafka_client_id == "movie-api"
     assert settings.kafka_consumer_group_id == "movie-api"

@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     service_name: str = "movie-api"
     log_level: str = "INFO"
     movie_api_port: int = 8001
+    jwt_secret_key: str = "your-secret-key-here"
+    hold_ttl_seconds: int = 30
 
     postgres_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/movie_reservation"
 
