@@ -1,7 +1,9 @@
 import logging
 
 from core.config import get_settings
+from core.db.postgresql import init_models
 from core.kafka import KafkaProducer
+from core.seed import seed_initial_admin
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
 from routes.health import router as health_router
@@ -15,6 +17,8 @@ logging.basicConfig(level=_settings.log_level)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await init_models()
+    await seed_initial_admin()
     producer = KafkaProducer()
     await producer.start()
     app.state.kafka_producer = producer

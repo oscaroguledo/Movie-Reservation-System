@@ -55,6 +55,10 @@ services:
       JWT_DEFAULT_EXPIRATION_MINUTES: ${JWT_DEFAULT_EXPIRATION_MINUTES:-30}
       POSTGRES_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # Bootstraps the very first admin on startup — every admin-management
+      # endpoint otherwise requires an existing admin. Leave unset to skip.
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
     ports:
       - "${AUTH_API_PORT:-8000}:8000"
     depends_on:
@@ -75,7 +79,40 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  
+  movie-api:
+    build:
+      context: ./movie_api
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MOVIE_API_PORT: 8001
+      # Same value as auth-api's — movie-api verifies the JWTs auth-api
+      # issues, so both services must share one secret.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      HOLD_TTL_SECONDS: ${HOLD_TTL_SECONDS:-30}
+      POSTGRES_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    ports:
+      - "${MOVIE_API_PORT:-8001}:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  movie-worker:
+    build:
+      context: ./movie_api
+    command: ["python", "worker.py"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:

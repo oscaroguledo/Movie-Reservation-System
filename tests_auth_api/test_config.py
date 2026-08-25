@@ -11,6 +11,10 @@ def test_settings_defaults():
     assert settings.kafka_bootstrap_servers == "localhost:9092"
     assert settings.kafka_client_id == "auth-api"
     assert settings.kafka_consumer_group_id == "auth-api"
+    assert settings.initial_admin_email is None
+    assert settings.initial_admin_password is None
+    assert settings.initial_admin_first_name == "Admin"
+    assert settings.initial_admin_last_name == "User"
 
 
 def test_settings_read_from_env(monkeypatch):

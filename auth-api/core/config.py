@@ -16,6 +16,14 @@ class Settings(BaseSettings):
     jwt_default_expiration_minutes: int = 30
     hold_ttl_seconds: int = 30
 
+    # Bootstraps the very first admin on startup when set — every
+    # admin-management endpoint otherwise requires an existing admin, which
+    # is a deadlock on a fresh system. Left unset, seeding is skipped.
+    initial_admin_email: str | None = None
+    initial_admin_password: str | None = None
+    initial_admin_first_name: str = "Admin"
+    initial_admin_last_name: str = "User"
+
     postgres_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/movie_reservation"
 
     kafka_bootstrap_servers: str = "localhost:9092"
