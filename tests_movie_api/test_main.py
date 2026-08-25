@@ -28,6 +28,14 @@ def test_movie_router_is_mounted():
     assert "/movies/{movie_id}" in paths
 
 
+def test_showroom_router_is_mounted():
+    from main import app
+
+    paths = set(app.openapi()["paths"])
+    assert "/showrooms" in paths
+    assert "/showrooms/{showroom_id}" in paths
+
+
 def test_module_settings_is_the_cached_settings_singleton():
     from core.config import get_settings
     from main import _settings

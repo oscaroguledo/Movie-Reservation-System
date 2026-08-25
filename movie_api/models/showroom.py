@@ -36,7 +36,7 @@ class Showroom(Base):
             "id": str(self.id),
             "name": self.name,
             "capacity": self.capacity,
-            "created_at": self.created_at.isoformat(),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
 
@@ -90,5 +90,5 @@ class ShowroomSeat(Base):
             "showroom_id": str(self.showroom_id),
             "row": self.row,
             "number": self.number,
-            "created_at": self.created_at.isoformat(),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }
