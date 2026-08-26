@@ -72,7 +72,9 @@ class ScreeningRedisRepository:
     async def remove_from_schedule(self, showroom_id: UUID, showtime_id: UUID) -> None:
         await redis_client.hdel(f"{_SCHEDULE_PREFIX}{showroom_id}", str(showtime_id))
 
-    async def add_to_date_index(self, on_date: str, movie_id: UUID, showroom_id: UUID, showtime_id: UUID) -> None:
+    async def add_to_date_index(
+        self, on_date: str, movie_id: UUID, showroom_id: UUID, showtime_id: UUID
+    ) -> None:
         await redis_client.sadd(
             f"{_DATE_INDEX_PREFIX}{on_date}", f"{movie_id}|{showroom_id}|{showtime_id}"
         )

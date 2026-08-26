@@ -20,17 +20,6 @@ class ShowroomRedisRepository:
         raw = await redis_client.get(f"{_ITEM_PREFIX}{showroom_id}")
         return json.loads(raw) if raw is not None else None
 
-    async def list(self) -> list[dict[str, Any]] | None:
-        if not await redis_client.exists(_INDEX_KEY):
-            return None
-
-        ids = await redis_client.smembers(_INDEX_KEY)
-        if not ids:
-            return []
-
-        raw_values = await redis_client.mget([f"{_ITEM_PREFIX}{i}" for i in ids])
-        return [json.loads(raw) for raw in raw_values if raw is not None]
-
     async def save(self, data: dict[str, Any]) -> None:
         await redis_client.set(f"{_ITEM_PREFIX}{data['id']}", json.dumps(data))
         await redis_client.sadd(_INDEX_KEY, data["id"])
@@ -47,10 +36,18 @@ class ShowroomRedisRepository:
     async def release_name(self, name: str) -> None:
         await redis_client.delete(f"{_NAME_LOCK_PREFIX}{name}")
 
-    async def reserve_seat_label(self, showroom_id: UUID, row: str, number: int, seat_id: UUID) -> bool:
+    async def reserve_seat_label(
+        self, showroom_id: UUID, row: str, number: int, seat_id: UUID
+    ) -> bool:
         key = f"{_SEAT_LABEL_LOCK_PREFIX}{showroom_id}:{row}{number}"
         return bool(await redis_client.set(key, str(seat_id), nx=True))
 
+    # get_seats/save_seats/list are defined in this order deliberately: a
+    # return annotation using the bare `list[...]` builtin is evaluated
+    # against the class body's own namespace at class-definition time, so
+    # once list() exists as a method here, a later `list[...]` annotation
+    # would resolve to that method instead of the builtin and blow up
+    # with "'function' object is not subscriptable" on Python <3.14.
     async def get_seats(self, showroom_id: UUID) -> list[dict[str, Any]] | None:
         index_key = f"{_SEATS_INDEX_PREFIX}{showroom_id}"
         if not await redis_client.exists(index_key):
@@ -69,3 +66,14 @@ class ShowroomRedisRepository:
         for seat in seats:
             await redis_client.set(f"{_SEAT_PREFIX}{seat['id']}", json.dumps(seat))
             await redis_client.sadd(index_key, seat["id"])
+
+    async def list(self) -> list[dict[str, Any]] | None:
+        if not await redis_client.exists(_INDEX_KEY):
+            return None
+
+        ids = await redis_client.smembers(_INDEX_KEY)
+        if not ids:
+            return []
+
+        raw_values = await redis_client.mget([f"{_ITEM_PREFIX}{i}" for i in ids])
+        return [json.loads(raw) for raw in raw_values if raw is not None]

@@ -3,7 +3,6 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-import pytest
 import worker
 from core.events import Event, EventType
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -252,9 +251,12 @@ class TestHandleEvent:
         assert await worker.handle_event(event) is True
 
     async def test_operational_error_is_not_committed(self):
-        event = Event(event_type=EventType.GENRE_CREATED, payload={"id": str(uuid4()), "name": "x"})
+        event = Event(
+            event_type=EventType.GENRE_CREATED, payload={"id": str(uuid4()), "name": "x"}
+        )
+        error = OperationalError("s", {}, Exception())
 
-        with patch("worker.async_session_factory", side_effect=OperationalError("s", {}, Exception())):
+        with patch("worker.async_session_factory", side_effect=error):
             assert await worker.handle_event(event) is False
 
     async def test_unexpected_error_is_still_committed(self):

@@ -8,6 +8,7 @@ from core.kafka import KafkaProducer
 from repository.movie.postgresql import MoviePostgresRepository
 from repository.movie.redis import MovieRedisRepository
 from schemas.movie import MovieCreate, MovieUpdate
+
 from services.genre import GenreService
 
 logger = logging.getLogger(__name__)

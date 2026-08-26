@@ -10,6 +10,7 @@ from repository.reservation.redis import ReservationRedisRepository
 from repository.screening.postgresql import ScreeningPostgresRepository
 from repository.screening.redis import ScreeningRedisRepository
 from schemas.screening import ScreeningCreate
+
 from services.movie import MovieService
 from services.showroom import ShowroomService
 

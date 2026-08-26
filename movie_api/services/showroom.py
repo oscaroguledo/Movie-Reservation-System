@@ -36,6 +36,61 @@ class ShowroomService:
         )
         return data
 
+    # bulk_create_seats/list_seats are defined before list() below: a
+    # return/param annotation using the bare `list[...]` builtin is
+    # evaluated against the class body's own namespace at class-
+    # definition time, so once list() exists as a method here, a later
+    # `list[...]` annotation would resolve to that method instead of the
+    # builtin and blow up with "'function' object is not subscriptable"
+    # on Python <3.14.
+    async def bulk_create_seats(
+        self, showroom_id: UUID, rows: list[str], seats_per_row: int
+    ) -> list[dict[str, Any]]:
+        seats = []
+        for row in rows:
+            for number in range(1, seats_per_row + 1):
+                seat_id = uuid4()
+                claimed = await self.redis_repo.reserve_seat_label(
+                    showroom_id, row, number, seat_id
+                )
+                if not claimed:
+                    raise ValueError(
+                        "One or more seats already exist for this showroom, "
+                        "or the showroom does not exist"
+                    )
+                seats.append(
+                    {
+                        "id": str(seat_id),
+                        "showroom_id": str(showroom_id),
+                        "row": row,
+                        "number": number,
+                        "created_at": None,
+                    }
+                )
+
+        await self.redis_repo.save_seats(showroom_id, seats)
+        await self.producer.publish(
+            TOPIC,
+            Event(
+                event_type=EventType.SHOWROOM_SEATS_CREATED,
+                payload={"showroom_id": str(showroom_id), "seats": seats},
+            ),
+            key=str(showroom_id),
+        )
+        return seats
+
+    async def list_seats(self, showroom_id: UUID) -> list[dict[str, Any]]:
+        cached = await self.redis_repo.get_seats(showroom_id)
+        if cached is not None:
+            return cached
+
+        async with async_session_factory() as session:
+            seats = await ShowroomPostgresRepository(session).get_all_seats(showroom_id)
+            data = [seat.to_dict() for seat in seats]
+            if data:
+                await self.redis_repo.save_seats(showroom_id, data)
+            return data
+
     async def get(self, showroom_id: UUID) -> dict[str, Any] | None:
         cached = await self.redis_repo.get(showroom_id)
         if cached is not None:
@@ -103,51 +158,3 @@ class ShowroomService:
             key=str(showroom_id),
         )
         return True
-
-    async def bulk_create_seats(
-        self, showroom_id: UUID, rows: list[str], seats_per_row: int
-    ) -> list[dict[str, Any]]:
-        seats = []
-        for row in rows:
-            for number in range(1, seats_per_row + 1):
-                seat_id = uuid4()
-                claimed = await self.redis_repo.reserve_seat_label(
-                    showroom_id, row, number, seat_id
-                )
-                if not claimed:
-                    raise ValueError(
-                        "One or more seats already exist for this showroom, "
-                        "or the showroom does not exist"
-                    )
-                seats.append(
-                    {
-                        "id": str(seat_id),
-                        "showroom_id": str(showroom_id),
-                        "row": row,
-                        "number": number,
-                        "created_at": None,
-                    }
-                )
-
-        await self.redis_repo.save_seats(showroom_id, seats)
-        await self.producer.publish(
-            TOPIC,
-            Event(
-                event_type=EventType.SHOWROOM_SEATS_CREATED,
-                payload={"showroom_id": str(showroom_id), "seats": seats},
-            ),
-            key=str(showroom_id),
-        )
-        return seats
-
-    async def list_seats(self, showroom_id: UUID) -> list[dict[str, Any]]:
-        cached = await self.redis_repo.get_seats(showroom_id)
-        if cached is not None:
-            return cached
-
-        async with async_session_factory() as session:
-            seats = await ShowroomPostgresRepository(session).get_all_seats(showroom_id)
-            data = [seat.to_dict() for seat in seats]
-            if data:
-                await self.redis_repo.save_seats(showroom_id, data)
-            return data
