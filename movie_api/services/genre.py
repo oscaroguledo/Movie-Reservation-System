@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -25,7 +26,8 @@ class GenreService:
         if not await self.redis_repo.reserve_name(genre_create.name, genre_id):
             raise ValueError("Genre already exists")
 
-        data = {"id": str(genre_id), "name": genre_create.name, "created_at": None}
+        now = datetime.now(timezone.utc).isoformat()
+        data = {"id": str(genre_id), "name": genre_create.name, "created_at": now}
         await self.redis_repo.save(data)
         await self.producer.publish(
             TOPIC, Event(event_type=EventType.GENRE_CREATED, payload=data), key=str(genre_id)

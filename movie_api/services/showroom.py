@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -26,7 +27,7 @@ class ShowroomService:
             "id": str(showroom_id),
             "name": showroom_create.name,
             "capacity": showroom_create.capacity,
-            "created_at": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         await self.redis_repo.save(data)
         await self.producer.publish(
@@ -41,6 +42,7 @@ class ShowroomService:
     async def bulk_create_seats(
         self, showroom_id: UUID, rows: list[str], seats_per_row: int
     ) -> list[dict[str, Any]]:
+        now = datetime.now(timezone.utc).isoformat()
         seats = []
         for row in rows:
             for number in range(1, seats_per_row + 1):
@@ -59,7 +61,7 @@ class ShowroomService:
                         "showroom_id": str(showroom_id),
                         "row": row,
                         "number": number,
-                        "created_at": None,
+                        "created_at": now,
                     }
                 )
 

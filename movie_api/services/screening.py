@@ -67,13 +67,14 @@ class ScreeningService:
             await self.redis_repo.add_to_schedule(showroom_id, showtime_id, start_time, end_time)
             await self.redis_repo.mark_screening(movie_id, showroom_id, showtime_id)
 
+            now = datetime.now(timezone.utc).isoformat()
             showtime_data = {
                 "id": str(showtime_id),
                 "start_time": start_time.isoformat(),
                 "end_time": end_time.isoformat(),
                 "price": str(screening_create.price),
-                "created_at": None,
-                "updated_at": None,
+                "created_at": now,
+                "updated_at": now,
             }
             await self.redis_repo.save_showtime(showtime_data)
             await self.redis_repo.add_to_date_index(

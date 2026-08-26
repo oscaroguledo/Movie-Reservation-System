@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -36,6 +37,7 @@ class MovieService:
         await self._validate_genre_ids(movie_create.genre_ids)
 
         movie_id = uuid4()
+        now = datetime.now(timezone.utc).isoformat()
         data = {
             "id": str(movie_id),
             "title": movie_create.title,
@@ -45,8 +47,8 @@ class MovieService:
             if movie_create.release_date
             else None,
             "duration_minutes": movie_create.duration_minutes,
-            "created_at": None,
-            "updated_at": None,
+            "created_at": now,
+            "updated_at": now,
             "genre_ids": [str(genre_id) for genre_id in movie_create.genre_ids],
         }
         await self.redis_repo.save(data)
