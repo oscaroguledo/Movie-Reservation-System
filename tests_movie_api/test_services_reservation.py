@@ -197,12 +197,33 @@ class TestConfirm:
         stored = await ctx["service"].redis_repo.get(reservation_id)
         stored["expires_at"] = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
         await ctx["service"].redis_repo.save(stored)
+        ctx["producer"].reset_mock()
 
         with pytest.raises(ValueError, match="This hold has expired"):
             await ctx["service"].confirm(reservation_id, make_payment_create(ctx))
 
         expired = await ctx["service"].redis_repo.get(reservation_id)
         assert expired["status"] == "expired"
+
+    async def test_lazy_expiry_releases_the_seat_and_publishes_an_event(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
+        reservations = await ctx["service"].create_hold(principal, make_reservation_create(ctx))
+        reservation_id = uuid_from(reservations[0]["id"])
+        stored = await ctx["service"].redis_repo.get(reservation_id)
+        stored["expires_at"] = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+        await ctx["service"].redis_repo.save(stored)
+        ctx["producer"].reset_mock()
+
+        await ctx["service"].get(reservation_id)
+
+        ctx["producer"].publish.assert_awaited_once()
+        _, event = ctx["producer"].publish.await_args.args
+        assert event.event_type.value == "reservation.expired"
+        assert event.payload["status"] == "expired"
+
+        # The seat is free again — a new hold on it succeeds.
+        await ctx["service"].create_hold(principal, make_reservation_create(ctx))
 
 
 class TestCancel:
@@ -293,3 +314,17 @@ class TestListForPrincipal:
         guest = Principal(user_id=None, type=ReservationUserType.GUEST)
 
         assert await ctx["service"].list_for_principal(guest) == []
+
+    async def test_reflects_a_lazily_expired_hold_without_a_direct_get(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
+        reservations = await ctx["service"].create_hold(principal, make_reservation_create(ctx))
+        reservation_id = uuid_from(reservations[0]["id"])
+        stored = await ctx["service"].redis_repo.get(reservation_id)
+        stored["expires_at"] = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+        await ctx["service"].redis_repo.save(stored)
+
+        listed = await ctx["service"].list_for_principal(principal)
+
+        assert len(listed) == 1
+        assert listed[0]["status"] == "expired"

@@ -215,6 +215,7 @@ _HANDLERS: dict[EventType, Handler] = {
     EventType.RESERVATION_CREATED: handle_reservation_created,
     EventType.RESERVATION_CONFIRMED: handle_reservation_status_changed,
     EventType.RESERVATION_CANCELLED: handle_reservation_status_changed,
+    EventType.RESERVATION_EXPIRED: handle_reservation_status_changed,
     EventType.PAYMENT_RECORDED: handle_payment_recorded,
 }
 

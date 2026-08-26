@@ -243,6 +243,21 @@ class TestReservationHandlers:
 
         assert session.add.called
 
+    async def test_expired_is_routed_to_the_status_changed_handler(self):
+        assert worker._HANDLERS[EventType.RESERVATION_EXPIRED] is (
+            worker.handle_reservation_status_changed
+        )
+
+    async def test_status_changed_persists_an_expired_reservation(self):
+        session = make_session()
+        session.get.return_value = MagicMock()
+
+        await worker.handle_reservation_status_changed(
+            session, make_reservation_payload(status="expired", expires_at=None)
+        )
+
+        session.commit.assert_awaited_once()
+
 
 def make_payment_payload(**overrides):
     payload = {

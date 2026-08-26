@@ -32,6 +32,7 @@ class EventType(str, Enum):
     RESERVATION_CREATED = "reservation.created"
     RESERVATION_CONFIRMED = "reservation.confirmed"
     RESERVATION_CANCELLED = "reservation.cancelled"
+    RESERVATION_EXPIRED = "reservation.expired"
 
     PAYMENT_RECORDED = "payment.recorded"
 

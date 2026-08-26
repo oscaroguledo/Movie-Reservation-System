@@ -117,9 +117,15 @@ class ReservationService:
             if expires_at < datetime.now(timezone.utc):
                 data["status"] = ReservationStatus.EXPIRED.value
                 data["expires_at"] = None
+                data["updated_at"] = datetime.now(timezone.utc).isoformat()
                 await self.redis_repo.save(data)
                 await self.redis_repo.release_seat(
                     UUID(data["showtime_id"]), UUID(data["showroom_seat_id"])
+                )
+                await self.producer.publish(
+                    TOPIC,
+                    Event(event_type=EventType.RESERVATION_EXPIRED, payload=data),
+                    key=str(reservation_id),
                 )
 
         return data
@@ -210,4 +216,10 @@ class ReservationService:
     async def list_for_principal(self, principal: Principal) -> list[dict[str, Any]]:
         if principal.user_id is None:
             return []
-        return await self.redis_repo.list_for_user(principal.user_id)
+
+        reservations = await self.redis_repo.list_for_user(principal.user_id)
+        updated = [
+            await self._get_and_maybe_expire(UUID(reservation["id"]))
+            for reservation in reservations
+        ]
+        return [reservation for reservation in updated if reservation is not None]
