@@ -2,7 +2,10 @@ import json
 from typing import Any
 from uuid import UUID
 
+from core.config import get_settings
 from core.db.redis import redis_client
+
+settings = get_settings()
 
 _ITEM_PREFIX = "movie:"
 _INDEX_KEY = "movies:index"
@@ -20,7 +23,9 @@ class MovieRedisRepository:
 
     async def save(self, data: dict[str, Any]) -> None:
         movie_id = data["id"]
-        await redis_client.set(f"{_ITEM_PREFIX}{movie_id}", json.dumps(data))
+        await redis_client.set(
+            f"{_ITEM_PREFIX}{movie_id}", json.dumps(data), ex=settings.entity_cache_ttl_seconds
+        )
         await redis_client.sadd(_INDEX_KEY, movie_id)
         for genre_id in data.get("genre_ids", []):
             await redis_client.sadd(f"{_GENRE_INDEX_PREFIX}{genre_id}", movie_id)

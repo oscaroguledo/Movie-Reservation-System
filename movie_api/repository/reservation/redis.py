@@ -21,7 +21,17 @@ class ReservationRedisRepository:
     exclusivity guard (acquire_seat) doubles as the overbooking-prevention
     primitive: SETNX means only one caller ever wins it for a given
     (showtime, seat) pair. Postgres is written to asynchronously by
-    worker.py, driven by the events this repository's callers publish."""
+    worker.py, driven by the events this repository's callers publish.
+
+    Unlike the other resources, the reservation record itself (save/get)
+    carries no general cache TTL, and deliberately so: it's written to
+    Redis synchronously but to Postgres only after worker.py processes
+    the corresponding event. If the record's cache entry expired before
+    that landed, a client checking their own just-created reservation
+    could hit a false "not found" on the Postgres fallback. The seat
+    lock's TTL (hold_ttl_seconds, in acquire_seat) is a separate,
+    business-driven expiry — the hold window — not a cache-freshness
+    one, and is unaffected by this."""
 
     async def get(self, reservation_id: UUID) -> dict[str, Any] | None:
         raw = await redis_client.get(f"{_ITEM_PREFIX}{reservation_id}")

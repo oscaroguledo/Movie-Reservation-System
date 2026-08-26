@@ -2,7 +2,10 @@ import json
 from typing import Any
 from uuid import UUID
 
+from core.config import get_settings
 from core.db.redis import redis_client
+
+settings = get_settings()
 
 _ITEM_PREFIX = "showroom:"
 _INDEX_KEY = "showrooms:index"
@@ -14,14 +17,24 @@ _SEAT_LABEL_LOCK_PREFIX = "showroom:seat_label:"
 
 class ShowroomRedisRepository:
     """The synchronous read/write layer for showrooms and their seats.
-    Postgres is written to asynchronously by worker.py."""
+    Postgres is written to asynchronously by worker.py, and is what a
+    read falls back to once a cached entry's TTL lapses.
+
+    reserve_name/reserve_seat_label are deliberately exempt from that
+    TTL — they're correctness guards mirroring DB unique constraints,
+    not cached data, so they're released explicitly rather than by
+    expiry."""
 
     async def get(self, showroom_id: UUID) -> dict[str, Any] | None:
         raw = await redis_client.get(f"{_ITEM_PREFIX}{showroom_id}")
         return json.loads(raw) if raw is not None else None
 
     async def save(self, data: dict[str, Any]) -> None:
-        await redis_client.set(f"{_ITEM_PREFIX}{data['id']}", json.dumps(data))
+        await redis_client.set(
+            f"{_ITEM_PREFIX}{data['id']}",
+            json.dumps(data),
+            ex=settings.entity_cache_ttl_seconds,
+        )
         await redis_client.sadd(_INDEX_KEY, data["id"])
 
     async def delete(self, showroom_id: UUID) -> None:
@@ -64,7 +77,11 @@ class ShowroomRedisRepository:
     async def save_seats(self, showroom_id: UUID, seats: list[dict[str, Any]]) -> None:
         index_key = f"{_SEATS_INDEX_PREFIX}{showroom_id}"
         for seat in seats:
-            await redis_client.set(f"{_SEAT_PREFIX}{seat['id']}", json.dumps(seat))
+            await redis_client.set(
+                f"{_SEAT_PREFIX}{seat['id']}",
+                json.dumps(seat),
+                ex=settings.entity_cache_ttl_seconds,
+            )
             await redis_client.sadd(index_key, seat["id"])
 
     async def list(self) -> list[dict[str, Any]] | None:

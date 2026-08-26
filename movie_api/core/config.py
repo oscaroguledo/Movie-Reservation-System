@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     movie_api_port: int = 8001
     jwt_secret_key: str = "your-secret-key-here"
     hold_ttl_seconds: int = 30
+    # How long a Redis-cached entity (genre/movie/showroom/showtime) stays
+    # valid before a read falls back to Postgres and refreshes it. Distinct
+    # from hold_ttl_seconds, which governs reservation seat holds — a
+    # business rule, not a cache-freshness one.
+    entity_cache_ttl_seconds: int = 3600
 
     postgres_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/movie_reservation"
 

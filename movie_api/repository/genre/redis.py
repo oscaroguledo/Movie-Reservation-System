@@ -2,7 +2,10 @@ import json
 from typing import Any
 from uuid import UUID
 
+from core.config import get_settings
 from core.db.redis import redis_client
+
+settings = get_settings()
 
 _ITEM_PREFIX = "genre:"
 _INDEX_KEY = "genres:index"
@@ -12,7 +15,14 @@ _NAME_LOCK_PREFIX = "genre:name:"
 class GenreRedisRepository:
     """The synchronous read/write layer for genres — a read right after a
     write always sees it here. Postgres (repository/genre/postgresql.py)
-    is written to asynchronously by worker.py after the fact."""
+    is written to asynchronously by worker.py after the fact, and is
+    what a read falls back to once the cached entry's TTL lapses.
+
+    reserve_name/release_name are deliberately exempt from that TTL —
+    they're a correctness guard mirroring genres.name's unique
+    constraint, not cached data, so they must live exactly as long as
+    the genre does and no longer, managed explicitly rather than by
+    expiry."""
 
     async def get(self, genre_id: UUID) -> dict[str, Any] | None:
         raw = await redis_client.get(f"{_ITEM_PREFIX}{genre_id}")
@@ -32,7 +42,11 @@ class GenreRedisRepository:
         return [json.loads(raw) for raw in raw_values if raw is not None]
 
     async def save(self, data: dict[str, Any]) -> None:
-        await redis_client.set(f"{_ITEM_PREFIX}{data['id']}", json.dumps(data))
+        await redis_client.set(
+            f"{_ITEM_PREFIX}{data['id']}",
+            json.dumps(data),
+            ex=settings.entity_cache_ttl_seconds,
+        )
         await redis_client.sadd(_INDEX_KEY, data["id"])
 
     async def delete(self, genre_id: UUID) -> None:

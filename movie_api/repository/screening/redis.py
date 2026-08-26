@@ -3,7 +3,10 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from core.config import get_settings
 from core.db.redis import redis_client
+
+settings = get_settings()
 
 _SHOWTIME_PREFIX = "showtime:"
 _SCREENING_MARKER_PREFIX = "screening:"
@@ -21,20 +24,35 @@ class ScreeningRedisRepository:
     prevention — the same guarantee the Postgres advisory lock used to
     give — is now a short-lived Redis lock around a check-then-append
     against each showroom's own schedule, since the durable write to
-    Postgres no longer happens inside the request."""
+    Postgres no longer happens inside the request.
+
+    get_showtime/screening_exists/get_date_index results are cached
+    with a TTL and fall back to Postgres once it lapses (both callers,
+    in services/screening.py, already do that). get_schedule does NOT
+    get a TTL: it's the only record of what's booked in each room, and
+    there's no Postgres-backed overlap fallback to catch a double-
+    booking if it expired — this one must stay authoritative."""
 
     async def get_showtime(self, showtime_id: UUID) -> dict[str, Any] | None:
         raw = await redis_client.get(f"{_SHOWTIME_PREFIX}{showtime_id}")
         return json.loads(raw) if raw is not None else None
 
     async def save_showtime(self, data: dict[str, Any]) -> None:
-        await redis_client.set(f"{_SHOWTIME_PREFIX}{data['id']}", json.dumps(data))
+        await redis_client.set(
+            f"{_SHOWTIME_PREFIX}{data['id']}",
+            json.dumps(data),
+            ex=settings.entity_cache_ttl_seconds,
+        )
 
     async def screening_exists(self, movie_id: UUID, showroom_id: UUID, showtime_id: UUID) -> bool:
         return bool(await redis_client.exists(_screening_key(movie_id, showroom_id, showtime_id)))
 
     async def mark_screening(self, movie_id: UUID, showroom_id: UUID, showtime_id: UUID) -> None:
-        await redis_client.set(_screening_key(movie_id, showroom_id, showtime_id), "1")
+        await redis_client.set(
+            _screening_key(movie_id, showroom_id, showtime_id),
+            "1",
+            ex=settings.entity_cache_ttl_seconds,
+        )
 
     async def unmark_screening(
         self, movie_id: UUID, showroom_id: UUID, showtime_id: UUID
@@ -75,9 +93,9 @@ class ScreeningRedisRepository:
     async def add_to_date_index(
         self, on_date: str, movie_id: UUID, showroom_id: UUID, showtime_id: UUID
     ) -> None:
-        await redis_client.sadd(
-            f"{_DATE_INDEX_PREFIX}{on_date}", f"{movie_id}|{showroom_id}|{showtime_id}"
-        )
+        key = f"{_DATE_INDEX_PREFIX}{on_date}"
+        await redis_client.sadd(key, f"{movie_id}|{showroom_id}|{showtime_id}")
+        await redis_client.expire(key, settings.entity_cache_ttl_seconds)
 
     async def get_date_index(self, on_date: str) -> list[tuple[str, str, str]] | None:
         key = f"{_DATE_INDEX_PREFIX}{on_date}"

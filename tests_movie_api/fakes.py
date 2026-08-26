@@ -16,11 +16,16 @@ class FakeRedis:
     async def get(self, key):
         return self.store.get(key)
 
-    async def set(self, key, value, nx=False, px=None):
+    async def set(self, key, value, nx=False, px=None, ex=None):
         if nx and key in self.store:
             return None
         self.store[key] = value
         return True
+
+    async def expire(self, key, seconds):
+        # No time simulation here — tests don't wait out TTLs, they just
+        # assert this was called with the key that should expire.
+        return key in self.store or key in self.sets or key in self.hashes
 
     async def delete(self, *keys):
         count = 0
