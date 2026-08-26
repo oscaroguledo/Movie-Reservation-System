@@ -244,6 +244,36 @@ class TestReservationHandlers:
         assert session.add.called
 
 
+def make_payment_payload(**overrides):
+    payload = {
+        "id": str(uuid4()),
+        "reservation_id": str(uuid4()),
+        "amount": "12.50",
+        "status": "succeeded",
+        "provider_reference": None,
+    }
+    payload.update(overrides)
+    return payload
+
+
+class TestPaymentHandlers:
+    async def test_recorded_persists_a_new_payment(self):
+        session = make_session()
+
+        await worker.handle_payment_recorded(session, make_payment_payload())
+
+        session.commit.assert_awaited_once()
+
+    async def test_recorded_tolerates_redelivery_of_an_already_persisted_payment(self):
+        session = make_session()
+        session.commit.side_effect = IntegrityError("stmt", {}, Exception("dup"))
+        session.get.return_value = MagicMock()
+
+        await worker.handle_payment_recorded(session, make_payment_payload())
+
+        session.rollback.assert_awaited()
+
+
 class TestHandleEvent:
     async def test_unknown_event_type_is_skipped_and_committed(self):
         event = MagicMock(event_type="unknown", event_id="x", payload={})

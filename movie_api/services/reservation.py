@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -6,12 +7,14 @@ from core.auth import Principal
 from core.config import get_settings
 from core.events import TOPIC, Event, EventType
 from core.kafka import KafkaProducer
-from models import ReservationStatus, ReservationUserType
+from models import PaymentStatus, ReservationStatus, ReservationUserType
 from repository.reservation.postgresql import ReservationPostgresRepository
 from repository.reservation.redis import ReservationRedisRepository
+from schemas.payment import PaymentCreate
 from schemas.reservation import ReservationCreate
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.payment import PaymentService
 from services.screening import ScreeningService
 
 settings = get_settings()
@@ -25,6 +28,10 @@ class NotAuthorizedError(Exception):
     """The current principal may not act on a reservation not theirs."""
 
 
+class PaymentFailedError(ValueError):
+    """The submitted payment amount didn't match the reservation's price."""
+
+
 class ReservationService:
     """acquire_seat's SETNX is the overbooking guarantee now (previously
     Postgres's unique index); Postgres is just a durable history log."""
@@ -35,11 +42,20 @@ class ReservationService:
         redis_repo: ReservationRedisRepository,
         producer: KafkaProducer,
         screening_service: ScreeningService,
+        payment_service: PaymentService,
     ):
         self.session = session
         self.redis_repo = redis_repo
         self.producer = producer
         self.screening_service = screening_service
+        self.payment_service = payment_service
+
+    @staticmethod
+    def is_authorized(principal: Principal, reservation: dict[str, Any]) -> bool:
+        reservation_user_id = reservation.get("user_id")
+        is_owner = principal.user_id is not None and reservation_user_id == str(principal.user_id)
+        is_admin = principal.type == ReservationUserType.ADMIN
+        return is_owner or is_admin
 
     async def create_hold(
         self, principal: Principal, reservation_create: ReservationCreate
@@ -111,7 +127,9 @@ class ReservationService:
     async def get(self, reservation_id: UUID) -> dict[str, Any] | None:
         return await self._get_and_maybe_expire(reservation_id)
 
-    async def confirm(self, reservation_id: UUID) -> dict[str, Any] | None:
+    async def confirm(
+        self, reservation_id: UUID, payment_create: PaymentCreate
+    ) -> dict[str, Any] | None:
         reservation = await self._get_and_maybe_expire(reservation_id)
         if reservation is None:
             return None
@@ -120,6 +138,20 @@ class ReservationService:
             raise ValueError("This hold has expired")
         if reservation["status"] != ReservationStatus.PENDING.value:
             raise ValueError("Only a pending reservation can be confirmed")
+
+        showtime = await self.screening_service.get_showtime(UUID(reservation["showtime_id"]))
+        expected_amount = Decimal(showtime["price"])
+        payment = await self.payment_service.charge(
+            reservation_id,
+            payment_create.amount,
+            expected_amount,
+            payment_create.provider_reference,
+        )
+        if payment["status"] != PaymentStatus.SUCCEEDED.value:
+            raise PaymentFailedError(
+                f"Payment of {payment_create.amount} does not match "
+                f"the reservation price of {expected_amount}"
+            )
 
         reservation["status"] = ReservationStatus.CONFIRMED.value
         reservation["expires_at"] = None
@@ -140,12 +172,7 @@ class ReservationService:
         if reservation is None:
             return None
 
-        reservation_user_id = reservation.get("user_id")
-        is_owner = principal.user_id is not None and reservation_user_id == str(
-            principal.user_id
-        )
-        is_admin = principal.type == ReservationUserType.ADMIN
-        if not (is_owner or is_admin):
+        if not self.is_authorized(principal, reservation):
             raise NotAuthorizedError("Not authorized to cancel this reservation")
 
         if reservation["status"] not in (
@@ -162,6 +189,8 @@ class ReservationService:
                     "Cannot cancel a reservation for a screening that already started"
                 )
 
+        was_confirmed = reservation["status"] == ReservationStatus.CONFIRMED.value
+
         reservation["status"] = ReservationStatus.CANCELLED.value
         reservation["expires_at"] = None
         reservation["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -169,6 +198,8 @@ class ReservationService:
         await self.redis_repo.release_seat(
             UUID(reservation["showtime_id"]), UUID(reservation["showroom_seat_id"])
         )
+        if was_confirmed and showtime is not None:
+            await self.payment_service.refund(reservation_id, Decimal(showtime["price"]))
         await self.producer.publish(
             TOPIC,
             Event(event_type=EventType.RESERVATION_CANCELLED, payload=reservation),

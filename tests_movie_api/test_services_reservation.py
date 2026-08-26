@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -7,16 +8,24 @@ from core.auth import Principal
 from models import ReservationUserType
 from repository.genre.redis import GenreRedisRepository
 from repository.movie.redis import MovieRedisRepository
+from repository.payment.redis import PaymentRedisRepository
 from repository.reservation.redis import ReservationRedisRepository
 from repository.screening.redis import ScreeningRedisRepository
 from repository.showroom.redis import ShowroomRedisRepository
 from schemas.movie import MovieCreate
+from schemas.payment import PaymentCreate
 from schemas.reservation import ReservationCreate
 from schemas.screening import ScreeningCreate
 from schemas.showroom import ShowroomCreate
 from services.genre import GenreService
 from services.movie import MovieService
-from services.reservation import NotAuthorizedError, ReservationService, SeatUnavailableError
+from services.payment import PaymentService
+from services.reservation import (
+    NotAuthorizedError,
+    PaymentFailedError,
+    ReservationService,
+    SeatUnavailableError,
+)
 from services.screening import ScreeningService
 from services.showroom import ShowroomService
 
@@ -70,11 +79,15 @@ async def make_service(fake_redis, *, screening_start=None):
         )
     )
 
+    payment_service = PaymentService(
+        session=session, redis_repo=PaymentRedisRepository(), producer=producer
+    )
     service = ReservationService(
         session=session,
         redis_repo=ReservationRedisRepository(),
         producer=producer,
         screening_service=screening_service,
+        payment_service=payment_service,
     )
     return {
         "service": service,
@@ -83,6 +96,7 @@ async def make_service(fake_redis, *, screening_start=None):
         "showroom_id": uuid_from(showroom["id"]),
         "showtime_id": uuid_from(screening["showtime_id"]),
         "seat_id": uuid_from(seats[0]["id"]),
+        "price": Decimal("12.50"),
     }
 
 
@@ -95,6 +109,12 @@ def make_reservation_create(ctx, **overrides):
     )
     defaults.update(overrides)
     return ReservationCreate(**defaults)
+
+
+def make_payment_create(ctx, **overrides):
+    defaults = dict(amount=ctx["price"])
+    defaults.update(overrides)
+    return PaymentCreate(**defaults)
 
 
 class TestCreateHold:
@@ -131,7 +151,7 @@ class TestConfirm:
     async def test_returns_none_when_not_found(self, fake_redis):
         ctx = await make_service(fake_redis)
 
-        assert await ctx["service"].confirm(uuid4()) is None
+        assert await ctx["service"].confirm(uuid4(), make_payment_create(ctx)) is None
 
     async def test_confirms_a_pending_reservation(self, fake_redis):
         ctx = await make_service(fake_redis)
@@ -139,20 +159,35 @@ class TestConfirm:
         reservations = await ctx["service"].create_hold(principal, make_reservation_create(ctx))
         reservation_id = uuid_from(reservations[0]["id"])
 
-        confirmed = await ctx["service"].confirm(reservation_id)
+        confirmed = await ctx["service"].confirm(reservation_id, make_payment_create(ctx))
 
         assert confirmed["status"] == "confirmed"
         assert confirmed["expires_at"] is None
+
+    async def test_payment_amount_mismatch_raises_payment_failed_error(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
+        reservations = await ctx["service"].create_hold(principal, make_reservation_create(ctx))
+        reservation_id = uuid_from(reservations[0]["id"])
+
+        with pytest.raises(PaymentFailedError):
+            await ctx["service"].confirm(
+                reservation_id, make_payment_create(ctx, amount=Decimal("1.00"))
+            )
+
+        # Still pending — a failed payment doesn't consume the hold.
+        reservation = await ctx["service"].redis_repo.get(reservation_id)
+        assert reservation["status"] == "pending"
 
     async def test_rejects_confirming_twice(self, fake_redis):
         ctx = await make_service(fake_redis)
         principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
         reservations = await ctx["service"].create_hold(principal, make_reservation_create(ctx))
         reservation_id = uuid_from(reservations[0]["id"])
-        await ctx["service"].confirm(reservation_id)
+        await ctx["service"].confirm(reservation_id, make_payment_create(ctx))
 
         with pytest.raises(ValueError, match="Only a pending reservation"):
-            await ctx["service"].confirm(reservation_id)
+            await ctx["service"].confirm(reservation_id, make_payment_create(ctx))
 
     async def test_lazily_expires_a_stale_pending_hold(self, fake_redis):
         ctx = await make_service(fake_redis)
@@ -164,7 +199,7 @@ class TestConfirm:
         await ctx["service"].redis_repo.save(stored)
 
         with pytest.raises(ValueError, match="This hold has expired"):
-            await ctx["service"].confirm(reservation_id)
+            await ctx["service"].confirm(reservation_id, make_payment_create(ctx))
 
         expired = await ctx["service"].redis_repo.get(reservation_id)
         assert expired["status"] == "expired"
@@ -218,6 +253,29 @@ class TestCancel:
 
         with pytest.raises(ValueError, match="already started"):
             await ctx["service"].cancel(principal, reservation_id)
+
+    async def test_cancelling_a_confirmed_reservation_issues_a_refund(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
+        reservations = await ctx["service"].create_hold(principal, make_reservation_create(ctx))
+        reservation_id = uuid_from(reservations[0]["id"])
+        await ctx["service"].confirm(reservation_id, make_payment_create(ctx))
+
+        await ctx["service"].cancel(principal, reservation_id)
+
+        payments = await ctx["service"].payment_service.list_for_reservation(reservation_id)
+        assert [p["status"] for p in payments] == ["succeeded", "refunded"]
+
+    async def test_cancelling_a_pending_reservation_issues_no_refund(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
+        reservations = await ctx["service"].create_hold(principal, make_reservation_create(ctx))
+        reservation_id = uuid_from(reservations[0]["id"])
+
+        await ctx["service"].cancel(principal, reservation_id)
+
+        payments = await ctx["service"].payment_service.list_for_reservation(reservation_id)
+        assert payments == []
 
 
 class TestListForPrincipal:

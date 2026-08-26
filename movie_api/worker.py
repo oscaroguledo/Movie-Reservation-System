@@ -8,9 +8,10 @@ from uuid import UUID
 from core.db.postgresql import async_session_factory
 from core.events import TOPIC, Event, EventType
 from core.kafka import KafkaConsumer
-from models import ReservationStatus, ReservationUserType
+from models import PaymentStatus, ReservationStatus, ReservationUserType
 from repository.genre.postgresql import GenrePostgresRepository
 from repository.movie.postgresql import MoviePostgresRepository
+from repository.payment.postgresql import PaymentPostgresRepository
 from repository.reservation.postgresql import ReservationPostgresRepository
 from repository.screening.postgresql import ScreeningPostgresRepository
 from repository.showroom.postgresql import ShowroomPostgresRepository
@@ -182,6 +183,22 @@ async def handle_reservation_status_changed(session: AsyncSession, payload: dict
         await repo.create(reservation_id, *_reservation_args(payload))
 
 
+async def handle_payment_recorded(session: AsyncSession, payload: dict) -> None:
+    repo = PaymentPostgresRepository(session)
+    payment_id = UUID(payload["id"])
+    try:
+        await repo.create(
+            payment_id,
+            UUID(payload["reservation_id"]),
+            Decimal(payload["amount"]),
+            PaymentStatus(payload["status"]),
+            payload["provider_reference"],
+        )
+    except IntegrityError:
+        if await repo.get(payment_id) is None:
+            logger.error("PAYMENT_RECORDED %s could not be durably persisted", payment_id)
+
+
 _HANDLERS: dict[EventType, Handler] = {
     EventType.GENRE_CREATED: handle_genre_created,
     EventType.GENRE_UPDATED: handle_genre_updated,
@@ -198,6 +215,7 @@ _HANDLERS: dict[EventType, Handler] = {
     EventType.RESERVATION_CREATED: handle_reservation_created,
     EventType.RESERVATION_CONFIRMED: handle_reservation_status_changed,
     EventType.RESERVATION_CANCELLED: handle_reservation_status_changed,
+    EventType.PAYMENT_RECORDED: handle_payment_recorded,
 }
 
 

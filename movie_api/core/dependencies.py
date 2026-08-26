@@ -6,11 +6,13 @@ from core.kafka import KafkaProducer, get_kafka_producer
 from fastapi import Depends
 from repository.genre.redis import GenreRedisRepository
 from repository.movie.redis import MovieRedisRepository
+from repository.payment.redis import PaymentRedisRepository
 from repository.reservation.redis import ReservationRedisRepository
 from repository.screening.redis import ScreeningRedisRepository
 from repository.showroom.redis import ShowroomRedisRepository
 from services.genre import GenreService
 from services.movie import MovieService
+from services.payment import PaymentService
 from services.reservation import ReservationService
 from services.screening import ScreeningService
 from services.showroom import ShowroomService
@@ -62,14 +64,23 @@ def get_screening_service(
     )
 
 
+def get_payment_service(
+    session: AsyncSession = Depends(get_session),
+    producer: KafkaProducer = Depends(get_kafka_producer),
+) -> PaymentService:
+    return PaymentService(session=session, redis_repo=PaymentRedisRepository(), producer=producer)
+
+
 def get_reservation_service(
     session: AsyncSession = Depends(get_session),
     producer: KafkaProducer = Depends(get_kafka_producer),
     screening_service: ScreeningService = Depends(get_screening_service),
+    payment_service: PaymentService = Depends(get_payment_service),
 ) -> ReservationService:
     return ReservationService(
         session=session,
         redis_repo=ReservationRedisRepository(),
         producer=producer,
         screening_service=screening_service,
+        payment_service=payment_service,
     )

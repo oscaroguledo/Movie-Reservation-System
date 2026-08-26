@@ -4,8 +4,14 @@ from core.auth import Principal, get_current_principal, require_authenticated
 from core.dependencies import get_reservation_service
 from core.response import APIResponse, EResponse, SResponse
 from fastapi import APIRouter, Depends, Response
+from schemas.payment import PaymentCreate
 from schemas.reservation import ReservationCreate
-from services.reservation import NotAuthorizedError, ReservationService, SeatUnavailableError
+from services.reservation import (
+    NotAuthorizedError,
+    PaymentFailedError,
+    ReservationService,
+    SeatUnavailableError,
+)
 
 router = APIRouter()
 
@@ -30,11 +36,15 @@ async def create_reservation(
 @router.post("/reservations/{reservation_id}/confirm", response_model=APIResponse[dict])
 async def confirm_reservation(
     reservation_id: UUID,
+    payload: PaymentCreate,
     response: Response,
     reservation_service: ReservationService = Depends(get_reservation_service),
 ) -> APIResponse:
     try:
-        reservation = await reservation_service.confirm(reservation_id)
+        reservation = await reservation_service.confirm(reservation_id, payload)
+    except PaymentFailedError as exc:
+        response.status_code = 402
+        return EResponse(message=str(exc), status=402)
     except ValueError as exc:
         response.status_code = 409
         return EResponse(message=str(exc), status=409)

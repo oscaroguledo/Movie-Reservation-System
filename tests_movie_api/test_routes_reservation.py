@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from models import ReservationUserType
 from routes.reservation import get_reservation_service, router
-from services.reservation import NotAuthorizedError, SeatUnavailableError
+from services.reservation import NotAuthorizedError, PaymentFailedError, SeatUnavailableError
 
 
 def make_reservation(**overrides):
@@ -47,6 +47,12 @@ def make_reservation_payload(**overrides):
     return payload
 
 
+def make_payment_payload(**overrides):
+    payload = {"amount": "12.50"}
+    payload.update(overrides)
+    return payload
+
+
 class TestCreateReservation:
     def test_guest_can_hold_a_seat(self):
         service = AsyncMock()
@@ -75,7 +81,9 @@ class TestConfirmReservation:
         service.confirm.return_value = reservation
         client = make_client(service)
 
-        response = client.post(f"/reservations/{reservation['id']}/confirm")
+        response = client.post(
+            f"/reservations/{reservation['id']}/confirm", json=make_payment_payload()
+        )
 
         assert response.status_code == 200
         assert response.json()["data"]["status"] == "confirmed"
@@ -85,7 +93,7 @@ class TestConfirmReservation:
         service.confirm.return_value = None
         client = make_client(service)
 
-        response = client.post(f"/reservations/{uuid4()}/confirm")
+        response = client.post(f"/reservations/{uuid4()}/confirm", json=make_payment_payload())
 
         assert response.status_code == 404
 
@@ -94,9 +102,18 @@ class TestConfirmReservation:
         service.confirm.side_effect = ValueError("Only a pending reservation can be confirmed")
         client = make_client(service)
 
-        response = client.post(f"/reservations/{uuid4()}/confirm")
+        response = client.post(f"/reservations/{uuid4()}/confirm", json=make_payment_payload())
 
         assert response.status_code == 409
+
+    def test_payment_amount_mismatch_returns_402(self):
+        service = AsyncMock()
+        service.confirm.side_effect = PaymentFailedError("Payment does not match")
+        client = make_client(service)
+
+        response = client.post(f"/reservations/{uuid4()}/confirm", json=make_payment_payload())
+
+        assert response.status_code == 402
 
 
 class TestListMyReservations:

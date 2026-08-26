@@ -33,6 +33,8 @@ class EventType(str, Enum):
     RESERVATION_CONFIRMED = "reservation.confirmed"
     RESERVATION_CANCELLED = "reservation.cancelled"
 
+    PAYMENT_RECORDED = "payment.recorded"
+
 
 class Event(BaseModel):
     """Envelope for every event movie-api publishes to or consumes from Kafka."""

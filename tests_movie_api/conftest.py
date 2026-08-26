@@ -13,6 +13,7 @@ def fake_redis(monkeypatch):
         "repository.showroom.redis",
         "repository.screening.redis",
         "repository.reservation.redis",
+        "repository.payment.redis",
     ):
         monkeypatch.setattr(f"{module}.redis_client", redis)
     return redis

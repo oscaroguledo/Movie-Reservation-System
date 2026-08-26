@@ -3,12 +3,14 @@ from unittest.mock import AsyncMock
 from core.dependencies import (
     get_genre_service,
     get_movie_service,
+    get_payment_service,
     get_reservation_service,
     get_screening_service,
     get_showroom_service,
 )
 from services.genre import GenreService
 from services.movie import MovieService
+from services.payment import PaymentService
 from services.reservation import ReservationService
 from services.screening import ScreeningService
 from services.showroom import ShowroomService
@@ -64,7 +66,17 @@ def test_get_screening_service_builds_a_screening_service_with_its_dependencies(
     assert service.showroom_service is showroom_service
 
 
-def test_get_reservation_service_builds_a_reservation_service_with_a_screening_service():
+def test_get_payment_service_builds_a_payment_service():
+    session, producer = AsyncMock(), AsyncMock()
+
+    service = get_payment_service(session=session, producer=producer)
+
+    assert isinstance(service, PaymentService)
+    assert service.session is session
+    assert service.producer is producer
+
+
+def test_get_reservation_service_builds_a_reservation_service_with_its_dependencies():
     session, producer = AsyncMock(), AsyncMock()
     genre_service = get_genre_service(session=session, producer=producer)
     movie_service = get_movie_service(
@@ -77,10 +89,15 @@ def test_get_reservation_service_builds_a_reservation_service_with_a_screening_s
         movie_service=movie_service,
         showroom_service=showroom_service,
     )
+    payment_service = get_payment_service(session=session, producer=producer)
 
     service = get_reservation_service(
-        session=session, producer=producer, screening_service=screening_service
+        session=session,
+        producer=producer,
+        screening_service=screening_service,
+        payment_service=payment_service,
     )
 
     assert isinstance(service, ReservationService)
     assert service.screening_service is screening_service
+    assert service.payment_service is payment_service
