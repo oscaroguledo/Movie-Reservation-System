@@ -9,15 +9,8 @@ EventHandler = Callable[[Event], Awaitable[None]]
 
 
 class KafkaConsumer:
-    """Thin wrapper around AIOKafkaConsumer that deserializes messages into
-    a given envelope type (Event by default).
-
-    enable_auto_commit=False (the production default here) pairs with
-    manual commit() calls made after a message is fully handled — so a
-    crash mid-handling redelivers the message on restart rather than
-    silently losing it. Handlers must be idempotent (safe to run twice)
-    to tolerate that at-least-once redelivery.
-    """
+    """Deserializes messages into a given envelope type (Event by default).
+    enable_auto_commit=False pairs with manual commit() so a crash redelivers."""
 
     def __init__(
         self,
@@ -49,14 +42,12 @@ class KafkaConsumer:
 
     async def messages(self) -> AsyncIterator:
         """Yields deserialized envelopes without committing — callers
-        that need per-message control (e.g. the commands worker) commit
-        explicitly via commit() once a message is fully handled."""
+        commit explicitly via commit() once a message is fully handled."""
         async for message in self._consumer:
             yield self._envelope_cls.from_bytes(message.value)
 
     async def consume(self, handler: EventHandler) -> None:
-        """Convenience loop for simple at-most-once-per-crash handlers:
-        dispatches each message to `handler`, committing right after —
+        """Dispatches each message to `handler`, committing right after;
         use messages()/commit() directly for finer-grained control."""
         async for envelope in self.messages():
             await handler(envelope)

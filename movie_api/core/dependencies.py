@@ -1,8 +1,7 @@
-"""Central place to compose each resource's service from its repositories
-— avoids duplicating this wiring across every routes/*.py file. FastAPI
-resolves the Depends(...) chain per-request, so a single request that
-touches e.g. ReservationService still only builds one of each service."""
+"""Composes each resource's service from its session/repositories/producer
+so routes/*.py don't each repeat this wiring."""
 
+from core.db.postgresql import get_session
 from core.kafka import KafkaProducer, get_kafka_producer
 from fastapi import Depends
 from repository.genre.redis import GenreRedisRepository
@@ -15,33 +14,46 @@ from services.movie import MovieService
 from services.reservation import ReservationService
 from services.screening import ScreeningService
 from services.showroom import ShowroomService
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
-def get_genre_service(producer: KafkaProducer = Depends(get_kafka_producer)) -> GenreService:
-    return GenreService(redis_repo=GenreRedisRepository(), producer=producer)
+def get_genre_service(
+    session: AsyncSession = Depends(get_session),
+    producer: KafkaProducer = Depends(get_kafka_producer),
+) -> GenreService:
+    return GenreService(session=session, redis_repo=GenreRedisRepository(), producer=producer)
 
 
 def get_movie_service(
+    session: AsyncSession = Depends(get_session),
     producer: KafkaProducer = Depends(get_kafka_producer),
     genre_service: GenreService = Depends(get_genre_service),
 ) -> MovieService:
     return MovieService(
-        redis_repo=MovieRedisRepository(), producer=producer, genre_service=genre_service
+        session=session,
+        redis_repo=MovieRedisRepository(),
+        producer=producer,
+        genre_service=genre_service,
     )
 
 
 def get_showroom_service(
+    session: AsyncSession = Depends(get_session),
     producer: KafkaProducer = Depends(get_kafka_producer),
 ) -> ShowroomService:
-    return ShowroomService(redis_repo=ShowroomRedisRepository(), producer=producer)
+    return ShowroomService(
+        session=session, redis_repo=ShowroomRedisRepository(), producer=producer
+    )
 
 
 def get_screening_service(
+    session: AsyncSession = Depends(get_session),
     producer: KafkaProducer = Depends(get_kafka_producer),
     movie_service: MovieService = Depends(get_movie_service),
     showroom_service: ShowroomService = Depends(get_showroom_service),
 ) -> ScreeningService:
     return ScreeningService(
+        session=session,
         redis_repo=ScreeningRedisRepository(),
         producer=producer,
         movie_service=movie_service,
@@ -51,10 +63,12 @@ def get_screening_service(
 
 
 def get_reservation_service(
+    session: AsyncSession = Depends(get_session),
     producer: KafkaProducer = Depends(get_kafka_producer),
     screening_service: ScreeningService = Depends(get_screening_service),
 ) -> ReservationService:
     return ReservationService(
+        session=session,
         redis_repo=ReservationRedisRepository(),
         producer=producer,
         screening_service=screening_service,

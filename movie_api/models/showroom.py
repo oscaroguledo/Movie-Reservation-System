@@ -41,11 +41,8 @@ class Showroom(Base):
 
 
 class ShowroomSeat(Base):
-    """A seat in a showroom, which can be reserved for a showtime.
-
-    A showroom has many seats, and the same (row, number) label is only
-    unique within its own showroom — "A1" can exist in every room.
-    """
+    """A seat in a showroom. (row, number) is unique only within its
+    own showroom — "A1" can exist in every room."""
 
     __tablename__ = "showroom_seats"
     __table_args__ = (

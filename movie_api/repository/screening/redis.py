@@ -20,18 +20,8 @@ def _screening_key(movie_id: UUID, showroom_id: UUID, showtime_id: UUID) -> str:
 
 
 class ScreeningRedisRepository:
-    """The synchronous read/write layer for screenings. Overlap
-    prevention — the same guarantee the Postgres advisory lock used to
-    give — is now a short-lived Redis lock around a check-then-append
-    against each showroom's own schedule, since the durable write to
-    Postgres no longer happens inside the request.
-
-    get_showtime/screening_exists/get_date_index results are cached
-    with a TTL and fall back to Postgres once it lapses (both callers,
-    in services/screening.py, already do that). get_schedule does NOT
-    get a TTL: it's the only record of what's booked in each room, and
-    there's no Postgres-backed overlap fallback to catch a double-
-    booking if it expired — this one must stay authoritative."""
+    """Fast read/write layer for screenings. get_schedule carries no TTL —
+    it's the only overlap-prevention record; nothing in Postgres backs it up."""
 
     async def get_showtime(self, showtime_id: UUID) -> dict[str, Any] | None:
         raw = await redis_client.get(f"{_SHOWTIME_PREFIX}{showtime_id}")
@@ -60,9 +50,8 @@ class ScreeningRedisRepository:
         await redis_client.delete(_screening_key(movie_id, showroom_id, showtime_id))
 
     async def lock_schedule(self, showroom_id: UUID) -> bool:
-        """A short-lived mutex around one showroom's check-then-append —
-        released explicitly by unlock_schedule() once done, with a TTL as
-        a safety net against a crash leaving it held forever."""
+        """A short-lived mutex, released by unlock_schedule(), with a TTL
+        as a safety net against a crash leaving it held forever."""
         return bool(
             await redis_client.set(
                 f"{_SCHEDULE_LOCK_PREFIX}{showroom_id}", "1", nx=True, px=10_000

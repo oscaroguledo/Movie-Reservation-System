@@ -12,9 +12,8 @@ logger = logging.getLogger(__name__)
 
 
 class ScreeningPostgresRepository:
-    """Durable storage for screenings. Written to only by worker.py — the
-    Redis-backed service layer is the synchronous read/write path and the
-    actual overlap-prevention guard."""
+    """Durable storage for screenings, written to only by worker.py.
+    Redis is the synchronous read/write path and overlap-prevention guard."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -51,9 +50,7 @@ class ScreeningPostgresRepository:
         return movie_showtime
 
     async def delete_screening(self, movie_id: UUID, showroom_id: UUID, showtime_id: UUID) -> bool:
-        # Only the junction row is removed — Showtime itself may still be
-        # shared by another screening (e.g. a double feature in the same
-        # room and slot), so it isn't touched here.
+        # Only the junction row is removed; Showtime may be shared by another screening.
         movie_showtime = await self.session.get(
             MovieShowtime,
             {"movie_id": movie_id, "showroom_id": showroom_id, "showtime_id": showtime_id},

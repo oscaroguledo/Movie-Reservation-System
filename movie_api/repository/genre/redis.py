@@ -13,16 +13,8 @@ _NAME_LOCK_PREFIX = "genre:name:"
 
 
 class GenreRedisRepository:
-    """The synchronous read/write layer for genres — a read right after a
-    write always sees it here. Postgres (repository/genre/postgresql.py)
-    is written to asynchronously by worker.py after the fact, and is
-    what a read falls back to once the cached entry's TTL lapses.
-
-    reserve_name/release_name are deliberately exempt from that TTL —
-    they're a correctness guard mirroring genres.name's unique
-    constraint, not cached data, so they must live exactly as long as
-    the genre does and no longer, managed explicitly rather than by
-    expiry."""
+    """Fast read/write layer; Postgres is the fallback once the TTL lapses.
+    reserve_name/release_name are exempt from that TTL — correctness, not cache."""
 
     async def get(self, genre_id: UUID) -> dict[str, Any] | None:
         raw = await redis_client.get(f"{_ITEM_PREFIX}{genre_id}")
@@ -54,9 +46,8 @@ class GenreRedisRepository:
         await redis_client.srem(_INDEX_KEY, str(genre_id))
 
     async def reserve_name(self, name: str, genre_id: UUID) -> bool:
-        """Atomically claims `name` for `genre_id`. Postgres's own unique
-        constraint on genres.name won't be checked until the async write
-        lands, so this SETNX is the actual fast-path uniqueness guard."""
+        """Atomically claims `name`; this SETNX is the actual fast-path
+        uniqueness guard, since Postgres won't check it until later."""
         return bool(
             await redis_client.set(f"{_NAME_LOCK_PREFIX}{name}", str(genre_id), nx=True)
         )

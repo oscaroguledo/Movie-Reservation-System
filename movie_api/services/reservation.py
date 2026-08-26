@@ -1,47 +1,42 @@
-import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
 from core.auth import Principal
 from core.config import get_settings
-from core.db.postgresql import async_session_factory
 from core.events import TOPIC, Event, EventType
 from core.kafka import KafkaProducer
 from models import ReservationStatus, ReservationUserType
 from repository.reservation.postgresql import ReservationPostgresRepository
 from repository.reservation.redis import ReservationRedisRepository
 from schemas.reservation import ReservationCreate
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.screening import ScreeningService
 
-logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
 class SeatUnavailableError(ValueError):
-    """Raised when one or more requested seats are already held, booked,
-    or otherwise no longer available."""
+    """One or more requested seats are already held, booked, or gone."""
 
 
 class NotAuthorizedError(Exception):
-    """Raised when the current principal may not act on a reservation
-    that isn't theirs (and they aren't an admin)."""
+    """The current principal may not act on a reservation not theirs."""
 
 
 class ReservationService:
-    """Implements the hold/confirm/cancel flow from reservation
-    lifecycle.png, now Redis-first: acquire_seat's SETNX is the actual
-    overbooking guarantee (previously the Postgres partial unique index
-    played that role) — Postgres is written to asynchronously by
-    worker.py, purely for durable history/reporting."""
+    """acquire_seat's SETNX is the overbooking guarantee now (previously
+    Postgres's unique index); Postgres is just a durable history log."""
 
     def __init__(
         self,
+        session: AsyncSession,
         redis_repo: ReservationRedisRepository,
         producer: KafkaProducer,
         screening_service: ScreeningService,
     ):
+        self.session = session
         self.redis_repo = redis_repo
         self.producer = producer
         self.screening_service = screening_service
@@ -93,20 +88,17 @@ class ReservationService:
     async def _get_and_maybe_expire(self, reservation_id: UUID) -> dict[str, Any] | None:
         data = await self.redis_repo.get(reservation_id)
         if data is None:
-            async with async_session_factory() as session:
-                reservation = await ReservationPostgresRepository(session).get(reservation_id)
-                if reservation is None:
-                    return None
-                data = reservation.to_dict()
-                await self.redis_repo.save(data)
+            reservation = await ReservationPostgresRepository(self.session).get(reservation_id)
+            if reservation is None:
+                return None
+            data = reservation.to_dict()
+            await self.redis_repo.save(data)
 
+        # Lazy expiry: settle a stale PENDING hold on read rather than
+        # relying on a background sweep for correctness.
         if data["status"] == ReservationStatus.PENDING.value and data["expires_at"]:
             expires_at = datetime.fromisoformat(data["expires_at"])
             if expires_at < datetime.now(timezone.utc):
-                # Lazy expiry: the seat lock's own TTL has likely already
-                # freed the seat in Redis, but the reservation record
-                # itself needs its status settled too so it doesn't read
-                # as an active PENDING hold in history/admin views.
                 data["status"] = ReservationStatus.EXPIRED.value
                 data["expires_at"] = None
                 await self.redis_repo.save(data)
@@ -133,9 +125,6 @@ class ReservationService:
         reservation["expires_at"] = None
         reservation["updated_at"] = datetime.now(timezone.utc).isoformat()
         await self.redis_repo.save(reservation)
-        # The seat is now durably held via Redis with no TTL — the hold
-        # has done its job, so its expiry is removed rather than left to
-        # tick down toward a booking that's already confirmed.
         await self.redis_repo.persist_seat(
             UUID(reservation["showtime_id"]), UUID(reservation["showroom_seat_id"])
         )

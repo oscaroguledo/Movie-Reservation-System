@@ -29,10 +29,7 @@ async def handle_genre_created(session: AsyncSession, payload: dict) -> None:
     try:
         await repo.create(genre_id, payload["name"])
     except IntegrityError:
-        # At-least-once redelivery of an event already durably applied
-        # (crash after commit but before the Kafka offset commit) is
-        # expected and harmless — anything else is a real conflict,
-        # logged for investigation rather than crashing the worker.
+        # Redelivery of an already-applied write is expected and harmless.
         existing = await repo.get(genre_id)
         if existing is None or existing.name != payload["name"]:
             logger.error("GENRE_CREATED %s could not be durably persisted", genre_id)
@@ -205,9 +202,8 @@ _HANDLERS: dict[EventType, Handler] = {
 
 
 async def handle_event(event: Event) -> bool:
-    """Returns True when the Kafka offset should be committed (handled,
-    or intentionally skipped), False when it shouldn't (transient DB
-    outage) — leaving it uncommitted means this event is redelivered."""
+    """True commits the offset (handled or skipped); False leaves it
+    uncommitted so a transient DB outage triggers a redelivery."""
     handler = _HANDLERS.get(event.event_type)
     if handler is None:
         logger.warning("No handler registered for %s", event.event_type)
@@ -224,10 +220,7 @@ async def handle_event(event: Event) -> bool:
         )
         return False
     except Exception:
-        # A production system would route this to a dead-letter topic;
-        # out of scope here. Committing rather than retrying forever is
-        # the important part — one poison message must not block every
-        # later message on the same partition.
+        # Commit anyway: one poison message must not block the partition.
         logger.exception(
             "Failed to persist %s (%s) — committing to avoid blocking the partition",
             event.event_type,

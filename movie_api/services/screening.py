@@ -1,46 +1,41 @@
-import logging
 from datetime import date, datetime, time, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from core.db.postgresql import async_session_factory
 from core.events import TOPIC, Event, EventType
 from core.kafka import KafkaProducer
 from repository.reservation.redis import ReservationRedisRepository
 from repository.screening.postgresql import ScreeningPostgresRepository
 from repository.screening.redis import ScreeningRedisRepository
 from schemas.screening import ScreeningCreate
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.movie import MovieService
 from services.showroom import ShowroomService
 
-logger = logging.getLogger(__name__)
-
 
 class OverlappingScreeningError(ValueError):
-    """Raised when a showroom already has a screening scheduled that
-    overlaps the requested time window."""
+    """A showroom already has a screening scheduled in that time window."""
 
 
 class ScreeningNotFoundError(ValueError):
-    """Raised when the requested movie+showroom+showtime combination
-    isn't an actual scheduled screening."""
+    """The movie+showroom+showtime combination isn't a real screening."""
 
 
 class ScreeningService:
-    """Overlap prevention — the guarantee the Postgres advisory lock used
-    to give — is now a short-lived Redis lock (lock_schedule) around a
-    check-then-append against the showroom's own schedule, since the
-    durable write to Postgres no longer happens inside the request."""
+    """Overlap prevention is a short-lived Redis lock around a
+    check-then-append against the showroom's own schedule."""
 
     def __init__(
         self,
+        session: AsyncSession,
         redis_repo: ScreeningRedisRepository,
         producer: KafkaProducer,
         movie_service: MovieService,
         showroom_service: ShowroomService,
         reservation_redis_repo: ReservationRedisRepository,
     ):
+        self.session = session
         self.redis_repo = redis_repo
         self.producer = producer
         self.movie_service = movie_service
@@ -54,9 +49,6 @@ class ScreeningService:
         end_time = screening_create.end_time
 
         if not await self.redis_repo.lock_schedule(showroom_id):
-            # A concurrent scheduling attempt for this showroom is
-            # mid-flight — treat it the same as an overlap rather than
-            # let two requests race the check-then-append below.
             raise OverlappingScreeningError(
                 "This showroom already has a screening scheduled in that time window"
             )
@@ -108,14 +100,13 @@ class ScreeningService:
         if cached is not None:
             return cached
 
-        async with async_session_factory() as session:
-            showtime = await ScreeningPostgresRepository(session).get_showtime(showtime_id)
-            if showtime is None:
-                return None
+        showtime = await ScreeningPostgresRepository(self.session).get_showtime(showtime_id)
+        if showtime is None:
+            return None
 
-            data = showtime.to_dict()
-            await self.redis_repo.save_showtime(data)
-            return data
+        data = showtime.to_dict()
+        await self.redis_repo.save_showtime(data)
+        return data
 
     async def _screening_exists(
         self, movie_id: UUID, showroom_id: UUID, showtime_id: UUID
@@ -123,10 +114,9 @@ class ScreeningService:
         if await self.redis_repo.screening_exists(movie_id, showroom_id, showtime_id):
             return True
 
-        async with async_session_factory() as session:
-            return await ScreeningPostgresRepository(session).screening_exists(
-                movie_id, showroom_id, showtime_id
-            )
+        return await ScreeningPostgresRepository(self.session).screening_exists(
+            movie_id, showroom_id, showtime_id
+        )
 
     async def list_for_date(self, on_date: date) -> list[dict[str, Any]]:
         date_str = on_date.isoformat()
@@ -135,10 +125,9 @@ class ScreeningService:
         if cached_index is None:
             start_of_day = datetime.combine(on_date, time.min, tzinfo=timezone.utc)
             end_of_day = datetime.combine(on_date, time.max, tzinfo=timezone.utc)
-            async with async_session_factory() as session:
-                rows = await ScreeningPostgresRepository(session).get_screenings_for_date(
-                    start_of_day, end_of_day
-                )
+            rows = await ScreeningPostgresRepository(self.session).get_screenings_for_date(
+                start_of_day, end_of_day
+            )
 
             results = []
             for movie, showtime, showroom_id in rows:
@@ -169,8 +158,6 @@ class ScreeningService:
         if not await self._screening_exists(movie_id, showroom_id, showtime_id):
             return False
 
-        # Best-effort guard: refuse to unschedule a screening that still
-        # has an active seat hold/booking against it.
         if await self.reservation_redis_repo.has_any_active_seat(showtime_id):
             raise ValueError("Cannot delete a screening with active reservations")
 
@@ -193,9 +180,8 @@ class ScreeningService:
     async def seat_map(
         self, movie_id: UUID, showroom_id: UUID, showtime_id: UUID
     ) -> list[dict[str, Any]]:
-        """A PENDING hold only counts as 'held' while its seat lock is
-        still present — Redis's own TTL on that key is what makes a
-        stale, unswept hold disappear on its own."""
+        """A held seat's lock has its own TTL, so a stale unswept hold
+        clears itself without any check here needing to know about it."""
         if not await self._screening_exists(movie_id, showroom_id, showtime_id):
             raise ScreeningNotFoundError("Screening not found")
 

@@ -13,9 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 class MoviePostgresRepository:
-    """Durable storage for movies. Written to only by worker.py — it
-    parses the wire-format event payload into these native types
-    (release_date as a date, not a string) before calling in."""
+    """Durable storage for movies, written to only by worker.py, which
+    parses event payload fields (e.g. release_date) into native types."""
 
     def __init__(self, session: AsyncSession):
         self.session = session

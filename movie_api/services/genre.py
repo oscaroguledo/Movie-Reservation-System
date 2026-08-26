@@ -1,24 +1,22 @@
-import logging
 from typing import Any
 from uuid import UUID, uuid4
 
-from core.db.postgresql import async_session_factory
 from core.events import TOPIC, Event, EventType
 from core.kafka import KafkaProducer
 from repository.genre.postgresql import GenrePostgresRepository
 from repository.genre.redis import GenreRedisRepository
 from schemas.genre import GenreCreate, GenreUpdate
-
-logger = logging.getLogger(__name__)
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class GenreService:
-    """Orchestrates the two repositories: reads check Redis first, falling
-    back to Postgres (and repopulating Redis) on a miss. Writes land in
-    Redis immediately — a read right after a write always sees it — then
-    an event is published for worker.py to persist durably to Postgres."""
+    """Reads check Redis first, falling back to Postgres on a miss.
+    Writes land in Redis then publish an event for worker.py to persist."""
 
-    def __init__(self, redis_repo: GenreRedisRepository, producer: KafkaProducer):
+    def __init__(
+        self, session: AsyncSession, redis_repo: GenreRedisRepository, producer: KafkaProducer
+    ):
+        self.session = session
         self.redis_repo = redis_repo
         self.producer = producer
 
@@ -39,26 +37,24 @@ class GenreService:
         if cached is not None:
             return cached
 
-        async with async_session_factory() as session:
-            genre = await GenrePostgresRepository(session).get(genre_id)
-            if genre is None:
-                return None
+        genre = await GenrePostgresRepository(self.session).get(genre_id)
+        if genre is None:
+            return None
 
-            data = genre.to_dict()
-            await self.redis_repo.save(data)
-            return data
+        data = genre.to_dict()
+        await self.redis_repo.save(data)
+        return data
 
     async def list(self) -> list[dict[str, Any]]:
         cached = await self.redis_repo.list()
         if cached is not None:
             return cached
 
-        async with async_session_factory() as session:
-            genres = await GenrePostgresRepository(session).get_all()
-            data = [genre.to_dict() for genre in genres]
-            for item in data:
-                await self.redis_repo.save(item)
-            return data
+        genres = await GenrePostgresRepository(self.session).get_all()
+        data = [genre.to_dict() for genre in genres]
+        for item in data:
+            await self.redis_repo.save(item)
+        return data
 
     async def update(self, genre_id: UUID, genre_update: GenreUpdate) -> dict[str, Any] | None:
         existing = await self.get(genre_id)

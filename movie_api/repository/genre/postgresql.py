@@ -10,9 +10,8 @@ logger = logging.getLogger(__name__)
 
 
 class GenrePostgresRepository:
-    """Durable storage for genres. Written to only by worker.py, after
-    the fact — the Redis-backed service layer is what the API actually
-    reads and writes synchronously; see repository/genre/redis.py."""
+    """Durable storage for genres, written to only by worker.py.
+    The API reads/writes via repository/genre/redis.py instead."""
 
     def __init__(self, session: AsyncSession):
         self.session = session

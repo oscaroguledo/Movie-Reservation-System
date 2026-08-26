@@ -1,31 +1,28 @@
-import logging
 from typing import Any
 from uuid import UUID, uuid4
 
-from core.db.postgresql import async_session_factory
 from core.events import TOPIC, Event, EventType
 from core.kafka import KafkaProducer
 from repository.movie.postgresql import MoviePostgresRepository
 from repository.movie.redis import MovieRedisRepository
 from schemas.movie import MovieCreate, MovieUpdate
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.genre import GenreService
 
-logger = logging.getLogger(__name__)
-
 
 class MovieService:
-    """Same cache-aside-read / write-to-Redis-then-publish pattern as
-    GenreService. genre_ids are validated against GenreService (itself
-    Redis-first) synchronously, since Postgres's FK check won't run until
-    the async write lands in worker.py."""
+    """Same cache-aside pattern as GenreService. genre_ids are validated
+    against GenreService, since Postgres's own FK check runs async."""
 
     def __init__(
         self,
+        session: AsyncSession,
         redis_repo: MovieRedisRepository,
         producer: KafkaProducer,
         genre_service: GenreService,
     ):
+        self.session = session
         self.redis_repo = redis_repo
         self.producer = producer
         self.genre_service = genre_service
@@ -63,34 +60,32 @@ class MovieService:
         if cached is not None:
             return cached
 
-        async with async_session_factory() as session:
-            repo = MoviePostgresRepository(session)
-            movie = await repo.get(movie_id)
-            if movie is None:
-                return None
+        repo = MoviePostgresRepository(self.session)
+        movie = await repo.get(movie_id)
+        if movie is None:
+            return None
 
-            genre_ids = await repo.get_genre_ids(movie_id)
-            data = movie.to_dict()
-            data["genre_ids"] = [str(genre_id) for genre_id in genre_ids]
-            await self.redis_repo.save(data)
-            return data
+        genre_ids = await repo.get_genre_ids(movie_id)
+        data = movie.to_dict()
+        data["genre_ids"] = [str(genre_id) for genre_id in genre_ids]
+        await self.redis_repo.save(data)
+        return data
 
     async def list(self, genre_id: UUID | None = None) -> list[dict[str, Any]]:
         cached = await self.redis_repo.list(genre_id=genre_id)
         if cached is not None:
             return cached
 
-        async with async_session_factory() as session:
-            repo = MoviePostgresRepository(session)
-            movies = await repo.get_all(genre_id=genre_id)
-            data = []
-            for movie in movies:
-                genre_ids = await repo.get_genre_ids(movie.id)
-                item = movie.to_dict()
-                item["genre_ids"] = [str(g) for g in genre_ids]
-                data.append(item)
-                await self.redis_repo.save(item)
-            return data
+        repo = MoviePostgresRepository(self.session)
+        movies = await repo.get_all(genre_id=genre_id)
+        data = []
+        for movie in movies:
+            genre_ids = await repo.get_genre_ids(movie.id)
+            item = movie.to_dict()
+            item["genre_ids"] = [str(g) for g in genre_ids]
+            data.append(item)
+            await self.redis_repo.save(item)
+        return data
 
     async def update(self, movie_id: UUID, movie_update: MovieUpdate) -> dict[str, Any] | None:
         existing = await self.get(movie_id)

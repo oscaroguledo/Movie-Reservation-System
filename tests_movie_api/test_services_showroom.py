@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -8,8 +8,16 @@ from services.showroom import ShowroomService
 
 
 def make_service():
+    session = AsyncMock()
+    session.get.return_value = None
+    session.execute.return_value = MagicMock(
+        scalars=lambda: MagicMock(all=lambda: []), all=lambda: []
+    )
     producer = AsyncMock()
-    return ShowroomService(redis_repo=ShowroomRedisRepository(), producer=producer), producer
+    service = ShowroomService(
+        session=session, redis_repo=ShowroomRedisRepository(), producer=producer
+    )
+    return service, producer
 
 
 def uuid_from(id_str: str) -> UUID:

@@ -10,9 +10,8 @@ logger = logging.getLogger(__name__)
 
 
 class ReservationPostgresRepository:
-    """Durable storage for reservations. Written to only by worker.py —
-    the Redis-backed service layer (repository/reservation/redis.py) is
-    the synchronous read/write path and the actual overbooking guard."""
+    """Durable storage for reservations, written to only by worker.py.
+    Redis (repository/reservation/redis.py) is the actual overbooking guard."""
 
     def __init__(self, session: AsyncSession):
         self.session = session

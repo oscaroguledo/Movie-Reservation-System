@@ -16,14 +16,8 @@ _SEAT_LABEL_LOCK_PREFIX = "showroom:seat_label:"
 
 
 class ShowroomRedisRepository:
-    """The synchronous read/write layer for showrooms and their seats.
-    Postgres is written to asynchronously by worker.py, and is what a
-    read falls back to once a cached entry's TTL lapses.
-
-    reserve_name/reserve_seat_label are deliberately exempt from that
-    TTL — they're correctness guards mirroring DB unique constraints,
-    not cached data, so they're released explicitly rather than by
-    expiry."""
+    """Fast read/write layer for showrooms and seats. reserve_name and
+    reserve_seat_label are exempt from the cache TTL — correctness, not cache."""
 
     async def get(self, showroom_id: UUID) -> dict[str, Any] | None:
         raw = await redis_client.get(f"{_ITEM_PREFIX}{showroom_id}")
@@ -55,12 +49,7 @@ class ShowroomRedisRepository:
         key = f"{_SEAT_LABEL_LOCK_PREFIX}{showroom_id}:{row}{number}"
         return bool(await redis_client.set(key, str(seat_id), nx=True))
 
-    # get_seats/save_seats/list are defined in this order deliberately: a
-    # return annotation using the bare `list[...]` builtin is evaluated
-    # against the class body's own namespace at class-definition time, so
-    # once list() exists as a method here, a later `list[...]` annotation
-    # would resolve to that method instead of the builtin and blow up
-    # with "'function' object is not subscriptable" on Python <3.14.
+    # get_seats/save_seats must stay above list() — see repository/movie/redis.py's note.
     async def get_seats(self, showroom_id: UUID) -> list[dict[str, Any]] | None:
         index_key = f"{_SEATS_INDEX_PREFIX}{showroom_id}"
         if not await redis_client.exists(index_key):

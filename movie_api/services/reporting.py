@@ -77,15 +77,8 @@ class ReportingService:
         }
 
     async def revenue(self) -> dict:
-        """Revenue from CONFIRMED reservations' screening price.
-
-        The separate Payment model (with its own succeeded/failed/refunded
-        status) would be the more correct source of truth for money
-        actually collected once payment integration exists — but nothing
-        in this codebase creates Payment rows yet, so summing it would
-        just always read zero. Revisit this in favor of summing
-        Payment.amount WHERE status = 'succeeded' once that lands.
-        """
+        """Revenue from CONFIRMED reservations' screening price. Revisit in
+        favor of summing Payment.amount once payment integration exists."""
         try:
             total_result = await self.session.execute(
                 select(func.coalesce(func.sum(Showtime.price), 0))

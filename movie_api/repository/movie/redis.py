@@ -13,9 +13,8 @@ _GENRE_INDEX_PREFIX = "movies:by_genre:"
 
 
 class MovieRedisRepository:
-    """The synchronous read/write layer for movies (genre_ids included
-    inline in the cached dict, since MovieGenre has no ORM relationship
-    to eager-load). Postgres is written to asynchronously by worker.py."""
+    """Fast read/write layer for movies; genre_ids are inlined in the
+    cached dict since MovieGenre has no ORM relationship to eager-load."""
 
     async def get(self, movie_id: UUID) -> dict[str, Any] | None:
         raw = await redis_client.get(f"{_ITEM_PREFIX}{movie_id}")
@@ -30,12 +29,8 @@ class MovieRedisRepository:
         for genre_id in data.get("genre_ids", []):
             await redis_client.sadd(f"{_GENRE_INDEX_PREFIX}{genre_id}", movie_id)
 
-    # delete/list are defined in this order deliberately: a return/param
-    # annotation using the bare `list[...]` builtin is evaluated against
-    # the class body's own namespace at class-definition time, so once
-    # list() exists as a method here, a later `list[...]` annotation
-    # would resolve to that method instead of the builtin and blow up
-    # with "'function' object is not subscriptable" on Python <3.14.
+    # delete() must stay above list() — a later list[...] annotation would
+    # otherwise resolve to the method, not the builtin, and crash on <3.14.
     async def delete(self, movie_id: UUID, genre_ids: list[str] | None = None) -> None:
         await redis_client.delete(f"{_ITEM_PREFIX}{movie_id}")
         await redis_client.srem(_INDEX_KEY, str(movie_id))

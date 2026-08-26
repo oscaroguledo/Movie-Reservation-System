@@ -21,8 +21,7 @@ class ReservationStatus(str, enum.Enum):
 
 class ReservationUserType(str, enum.Enum):
     """Snapshot of the booker's role at reservation time — mirrors
-    auth-api's UserType (admin/regular) plus GUEST for unauthenticated
-    bookings, which is why user_id is nullable below."""
+    auth-api's UserType plus GUEST for unauthenticated bookings."""
 
     ADMIN = "admin"
     REGULAR = "regular"
@@ -60,9 +59,8 @@ class Reservation(Base):
         primary_key=True,
         server_default=func.gen_random_uuid(),
     )
-    # No FK to auth_api.users — movie_api doesn't own that table, and a
-    # cross-schema FK would couple this service's schema to auth-api's.
-    # Nullable because GUEST bookings have no authenticated user behind them.
+    # No FK to auth_api.users — movie_api doesn't own that table.
+    # Nullable because GUEST bookings have no authenticated user.
     user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), index=True)
     user_type: Mapped[ReservationUserType] = mapped_column(
         Enum(

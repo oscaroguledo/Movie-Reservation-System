@@ -21,10 +21,8 @@ from models import (
 
 
 def test_all_models_register_on_the_single_shared_base():
-    """Regression test: models/__init__.py and models/base.py each used to
-    define their own separate Base(DeclarativeBase), so models registered
-    against one were invisible to init_models()'s Base.metadata.create_all(),
-    meaning no tables would ever actually get created."""
+    """Regression test: separate Base(DeclarativeBase) instances used to mean
+    init_models()'s create_all() couldn't see all the models."""
     assert models.Base is PostgresBase
     assert set(models.Base.metadata.tables) == {
         "movie_api.genres",
@@ -40,9 +38,8 @@ def test_all_models_register_on_the_single_shared_base():
 
 
 def test_all_timestamp_columns_are_timezone_aware():
-    """Plain DateTime compiles to Postgres TIMESTAMP WITHOUT TIME ZONE;
-    every timestamp column must be DateTime(timezone=True) instead so
-    values round-trip correctly regardless of client/server timezone."""
+    """Plain DateTime compiles to TIMESTAMP WITHOUT TIME ZONE; every
+    timestamp column must use DateTime(timezone=True) instead."""
     timestamp_columns = [
         (Genre, "created_at"),
         (Movie, "created_at"),
@@ -347,9 +344,8 @@ class TestReservation:
         assert fk_targets == {"movie_api.showroom_seats.id"}
 
     def test_active_reservations_cannot_double_book_the_same_seat(self):
-        """Only one pending/confirmed reservation may hold a given seat for
-        a given screening at a time — cancelled/expired ones don't count,
-        so the same seat can be re-reserved after a hold lapses."""
+        """Only one pending/confirmed reservation may hold a seat at a time;
+        cancelled/expired ones don't count against re-reservation."""
         indexes = {idx.name: idx for idx in Reservation.__table__.indexes}
         guard = indexes["uq_reservations_active_seat_per_screening"]
 

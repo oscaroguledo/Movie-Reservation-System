@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -11,10 +11,20 @@ from services.movie import MovieService
 
 
 def make_service(producer=None):
+    session = AsyncMock()
+    session.get.return_value = None
+    session.execute.return_value = MagicMock(
+        scalars=lambda: MagicMock(all=lambda: []), all=lambda: []
+    )
     producer = producer or AsyncMock()
-    genre_service = GenreService(redis_repo=GenreRedisRepository(), producer=producer)
+    genre_service = GenreService(
+        session=session, redis_repo=GenreRedisRepository(), producer=producer
+    )
     movie_service = MovieService(
-        redis_repo=MovieRedisRepository(), producer=producer, genre_service=genre_service
+        session=session,
+        redis_repo=MovieRedisRepository(),
+        producer=producer,
+        genre_service=genre_service,
     )
     return movie_service, genre_service, producer
 

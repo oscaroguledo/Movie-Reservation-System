@@ -12,12 +12,8 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 class Principal(BaseModel):
-    """Who's making the request, derived entirely from the JWT's own
-    claims — movie_api has no access to auth-api's user table, so unlike
-    auth-api's own get_current_user there is no DB re-fetch here. A role
-    change in auth-api won't be visible to movie_api until the token
-    expires; that staleness window is the accepted cost of two services
-    not sharing a database."""
+    """Who's making the request, derived entirely from the JWT's own claims —
+    movie_api has no access to auth-api's user table to re-fetch from."""
 
     user_id: UUID | None
     type: ReservationUserType

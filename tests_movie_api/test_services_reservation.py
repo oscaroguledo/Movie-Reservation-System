@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -26,13 +26,26 @@ def uuid_from(id_str: str) -> UUID:
 
 
 async def make_service(fake_redis, *, screening_start=None):
-    producer = AsyncMock()
-    genre_service = GenreService(redis_repo=GenreRedisRepository(), producer=producer)
-    movie_service = MovieService(
-        redis_repo=MovieRedisRepository(), producer=producer, genre_service=genre_service
+    session = AsyncMock()
+    session.get.return_value = None
+    session.execute.return_value = MagicMock(
+        scalars=lambda: MagicMock(all=lambda: []), all=lambda: []
     )
-    showroom_service = ShowroomService(redis_repo=ShowroomRedisRepository(), producer=producer)
+    producer = AsyncMock()
+    genre_service = GenreService(
+        session=session, redis_repo=GenreRedisRepository(), producer=producer
+    )
+    movie_service = MovieService(
+        session=session,
+        redis_repo=MovieRedisRepository(),
+        producer=producer,
+        genre_service=genre_service,
+    )
+    showroom_service = ShowroomService(
+        session=session, redis_repo=ShowroomRedisRepository(), producer=producer
+    )
     screening_service = ScreeningService(
+        session=session,
         redis_repo=ScreeningRedisRepository(),
         producer=producer,
         movie_service=movie_service,
@@ -58,6 +71,7 @@ async def make_service(fake_redis, *, screening_start=None):
     )
 
     service = ReservationService(
+        session=session,
         redis_repo=ReservationRedisRepository(),
         producer=producer,
         screening_service=screening_service,

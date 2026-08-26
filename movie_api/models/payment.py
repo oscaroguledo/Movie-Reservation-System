@@ -18,9 +18,8 @@ class PaymentStatus(str, enum.Enum):
 
 
 class Payment(Base):
-    """A payment attempt against one reservation. Not one-to-one: a
-    reservation can have multiple rows here (e.g. a failed attempt
-    followed by a successful retry)."""
+    """A payment attempt against one reservation. Not one-to-one — a
+    reservation can have multiple rows (e.g. a failed retry)."""
 
     __tablename__ = "payments"
     __table_args__ = {"schema": "movie_api"}

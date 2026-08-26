@@ -10,13 +10,8 @@ TOPIC = "movies"
 
 
 class EventType(str, Enum):
-    """Every event type movie-api can publish or consume.
-
-    Each one is the durability half of a write: the service layer writes
-    the change to Redis synchronously (so reads reflect it immediately),
-    publishes the matching event here, and worker.py — the sole writer to
-    Postgres — persists it durably on consumption.
-    """
+    """Each is the durability half of a write: services write to Redis
+    then publish here, and worker.py is the sole writer to Postgres."""
 
     GENRE_CREATED = "genre.created"
     GENRE_UPDATED = "genre.updated"

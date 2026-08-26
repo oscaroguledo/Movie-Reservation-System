@@ -11,9 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 class ShowroomPostgresRepository:
-    """Durable storage for showrooms and their seats. Written to only by
-    worker.py — the Redis-backed service layer is the synchronous
-    read/write path; see repository/showroom/redis.py."""
+    """Durable storage for showrooms and their seats, written to only
+    by worker.py. See repository/showroom/redis.py for the read path."""
 
     def __init__(self, session: AsyncSession):
         self.session = session

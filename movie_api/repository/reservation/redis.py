@@ -17,21 +17,8 @@ def _seat_lock_key(showtime_id: UUID, seat_id: UUID) -> str:
 
 
 class ReservationRedisRepository:
-    """The synchronous read/write layer for reservations. A seat's
-    exclusivity guard (acquire_seat) doubles as the overbooking-prevention
-    primitive: SETNX means only one caller ever wins it for a given
-    (showtime, seat) pair. Postgres is written to asynchronously by
-    worker.py, driven by the events this repository's callers publish.
-
-    Unlike the other resources, the reservation record itself (save/get)
-    carries no general cache TTL, and deliberately so: it's written to
-    Redis synchronously but to Postgres only after worker.py processes
-    the corresponding event. If the record's cache entry expired before
-    that landed, a client checking their own just-created reservation
-    could hit a false "not found" on the Postgres fallback. The seat
-    lock's TTL (hold_ttl_seconds, in acquire_seat) is a separate,
-    business-driven expiry — the hold window — not a cache-freshness
-    one, and is unaffected by this."""
+    """acquire_seat's SETNX is the overbooking guard. save/get carry no
+    cache TTL — a reservation isn't in Postgres yet when it's created."""
 
     async def get(self, reservation_id: UUID) -> dict[str, Any] | None:
         raw = await redis_client.get(f"{_ITEM_PREFIX}{reservation_id}")
@@ -53,8 +40,7 @@ class ReservationRedisRepository:
 
     async def acquire_seat(self, showtime_id: UUID, seat_id: UUID, reservation_id: UUID) -> bool:
         """SETNX with a TTL matching the hold window — the fast-path
-        overbooking guard. If never confirmed or cancelled, the key (and
-        the seat's exclusivity) expires on its own."""
+        overbooking guard, expiring on its own if never confirmed."""
         return bool(
             await redis_client.set(
                 _seat_lock_key(showtime_id, seat_id),
@@ -76,9 +62,8 @@ class ReservationRedisRepository:
         return await redis_client.get(_seat_lock_key(showtime_id, seat_id))
 
     async def has_any_active_seat(self, showtime_id: UUID) -> bool:
-        """Whether any seat for this screening currently has a hold or
-        booking against it — used to refuse unscheduling a screening
-        that's still in use."""
+        """Whether any seat for this screening has a hold or booking,
+        used to refuse unscheduling a screening still in use."""
         async for _ in redis_client.scan_iter(match=f"{_SEAT_LOCK_PREFIX}{showtime_id}:*"):
             return True
         return False

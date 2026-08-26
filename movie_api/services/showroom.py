@@ -1,19 +1,19 @@
-import logging
 from typing import Any
 from uuid import UUID, uuid4
 
-from core.db.postgresql import async_session_factory
 from core.events import TOPIC, Event, EventType
 from core.kafka import KafkaProducer
 from repository.showroom.postgresql import ShowroomPostgresRepository
 from repository.showroom.redis import ShowroomRedisRepository
 from schemas.showroom import ShowroomCreate, ShowroomUpdate
-
-logger = logging.getLogger(__name__)
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class ShowroomService:
-    def __init__(self, redis_repo: ShowroomRedisRepository, producer: KafkaProducer):
+    def __init__(
+        self, session: AsyncSession, redis_repo: ShowroomRedisRepository, producer: KafkaProducer
+    ):
+        self.session = session
         self.redis_repo = redis_repo
         self.producer = producer
 
@@ -36,13 +36,8 @@ class ShowroomService:
         )
         return data
 
-    # bulk_create_seats/list_seats are defined before list() below: a
-    # return/param annotation using the bare `list[...]` builtin is
-    # evaluated against the class body's own namespace at class-
-    # definition time, so once list() exists as a method here, a later
-    # `list[...]` annotation would resolve to that method instead of the
-    # builtin and blow up with "'function' object is not subscriptable"
-    # on Python <3.14.
+    # Defined before list() below — see repository/showroom/redis.py's
+    # own note on the list()/list[...] annotation-ordering bug.
     async def bulk_create_seats(
         self, showroom_id: UUID, rows: list[str], seats_per_row: int
     ) -> list[dict[str, Any]]:
@@ -84,38 +79,35 @@ class ShowroomService:
         if cached is not None:
             return cached
 
-        async with async_session_factory() as session:
-            seats = await ShowroomPostgresRepository(session).get_all_seats(showroom_id)
-            data = [seat.to_dict() for seat in seats]
-            if data:
-                await self.redis_repo.save_seats(showroom_id, data)
-            return data
+        seats = await ShowroomPostgresRepository(self.session).get_all_seats(showroom_id)
+        data = [seat.to_dict() for seat in seats]
+        if data:
+            await self.redis_repo.save_seats(showroom_id, data)
+        return data
 
     async def get(self, showroom_id: UUID) -> dict[str, Any] | None:
         cached = await self.redis_repo.get(showroom_id)
         if cached is not None:
             return cached
 
-        async with async_session_factory() as session:
-            showroom = await ShowroomPostgresRepository(session).get(showroom_id)
-            if showroom is None:
-                return None
+        showroom = await ShowroomPostgresRepository(self.session).get(showroom_id)
+        if showroom is None:
+            return None
 
-            data = showroom.to_dict()
-            await self.redis_repo.save(data)
-            return data
+        data = showroom.to_dict()
+        await self.redis_repo.save(data)
+        return data
 
     async def list(self) -> list[dict[str, Any]]:
         cached = await self.redis_repo.list()
         if cached is not None:
             return cached
 
-        async with async_session_factory() as session:
-            showrooms = await ShowroomPostgresRepository(session).get_all()
-            data = [showroom.to_dict() for showroom in showrooms]
-            for item in data:
-                await self.redis_repo.save(item)
-            return data
+        showrooms = await ShowroomPostgresRepository(self.session).get_all()
+        data = [showroom.to_dict() for showroom in showrooms]
+        for item in data:
+            await self.redis_repo.save(item)
+        return data
 
     async def update(
         self, showroom_id: UUID, showroom_update: ShowroomUpdate

@@ -27,11 +27,8 @@ class KafkaProducer:
         await self._producer.stop()
 
     async def publish(self, topic: str, message: Serializable, key: str) -> None:
-        """key should be the relevant entity id (e.g. showroom_id for a
-        screening command, reservation_id for a reservation command) so
-        Kafka's per-partition ordering keeps same-entity messages in
-        order — not the message's own id, which would scatter unrelated
-        messages for the same entity across partitions."""
+        """key should be the entity id (e.g. showroom_id), not the message's
+        own id, so per-partition ordering keeps same-entity messages in order."""
         await self._producer.send_and_wait(
             topic, value=message.to_bytes(), key=key.encode("utf-8")
         )

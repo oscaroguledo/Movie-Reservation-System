@@ -18,10 +18,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_models() -> None:
     """Creates the movie_api schema and any tables that don't exist yet.
-
-    Stands in for real migrations (no Alembic in this project yet) — fine
-    for local dev, but it won't pick up schema changes on an existing table.
-    """
+    Stands in for real migrations — won't alter an existing table's schema."""
     async with engine.begin() as conn:
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS movie_api"))
         await conn.run_sync(Base.metadata.create_all)

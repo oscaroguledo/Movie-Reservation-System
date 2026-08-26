@@ -1,8 +1,5 @@
 """A minimal in-memory stand-in for redis.asyncio.Redis, covering just
-the operations this codebase's repository classes actually use. Real
-repository code runs against this in tests instead of mocking every
-individual redis_client call, so both the repository and the service
-orchestrating it get genuine coverage."""
+the operations this codebase's repository classes actually use."""
 
 import fnmatch
 
