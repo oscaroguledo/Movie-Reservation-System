@@ -2,23 +2,13 @@ from datetime import date
 from uuid import UUID
 
 from core.auth import Principal, require_admin
-from core.db.postgresql import get_session
+from core.dependencies import get_screening_service
 from core.response import APIResponse, EResponse, SResponse
 from fastapi import APIRouter, Depends, Response
 from schemas.screening import ScreeningCreate
-from movie_api.repository.screening.postgresql import (
-    OverlappingScreeningError,
-    ScreeningNotFoundError,
-    ScreeningService,
-)
-from sqlalchemy.exc import OperationalError
-from sqlalchemy.ext.asyncio import AsyncSession
+from services.screening import OverlappingScreeningError, ScreeningNotFoundError, ScreeningService
 
 router = APIRouter()
-
-
-def get_screening_service(session: AsyncSession = Depends(get_session)) -> ScreeningService:
-    return ScreeningService(session)
 
 
 @router.post("/screenings", response_model=APIResponse[dict])
@@ -29,19 +19,13 @@ async def schedule_screening(
     _admin: Principal = Depends(require_admin),
 ) -> APIResponse:
     try:
-        movie_showtime = await screening_service.schedule(payload)
+        screening = await screening_service.schedule(payload)
     except OverlappingScreeningError as exc:
         response.status_code = 409
         return EResponse(message=str(exc), status=409)
-    except ValueError as exc:
-        response.status_code = 422
-        return EResponse(message=str(exc), status=422)
-    except OperationalError:
-        response.status_code = 503
-        return EResponse(message="Database unavailable, please try again later", status=503)
 
     response.status_code = 201
-    return SResponse(data=movie_showtime.to_dict(), message="Screening scheduled", status=201)
+    return SResponse(data=screening, message="Screening scheduled", status=201)
 
 
 @router.get("/screenings", response_model=APIResponse[list[dict]])
@@ -50,21 +34,8 @@ async def list_screenings(
     show_date: date,
     screening_service: ScreeningService = Depends(get_screening_service),
 ) -> APIResponse:
-    try:
-        rows = await screening_service.list_for_date(show_date)
-    except OperationalError:
-        response.status_code = 503
-        return EResponse(message="Database unavailable, please try again later", status=503)
-
-    data = [
-        {
-            "movie": movie.to_dict(),
-            "showtime": showtime.to_dict(),
-            "showroom_id": str(showroom_id),
-        }
-        for movie, showtime, showroom_id in rows
-    ]
-    return SResponse(data=data, message="Screenings retrieved", status=200)
+    rows = await screening_service.list_for_date(show_date)
+    return SResponse(data=rows, message="Screenings retrieved", status=200)
 
 
 @router.delete(
@@ -83,9 +54,6 @@ async def delete_screening(
     except ValueError as exc:
         response.status_code = 409
         return EResponse(message=str(exc), status=409)
-    except OperationalError:
-        response.status_code = 503
-        return EResponse(message="Database unavailable, please try again later", status=503)
 
     if not deleted:
         response.status_code = 404
@@ -110,8 +78,5 @@ async def get_seat_map(
     except ScreeningNotFoundError as exc:
         response.status_code = 404
         return EResponse(message=str(exc), status=404)
-    except OperationalError:
-        response.status_code = 503
-        return EResponse(message="Database unavailable, please try again later", status=503)
 
     return SResponse(data=seat_map, message="Seat map retrieved", status=200)

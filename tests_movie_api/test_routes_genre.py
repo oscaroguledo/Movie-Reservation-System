@@ -4,15 +4,14 @@ from uuid import uuid4
 from core.auth import Principal, require_admin
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from models import Genre, ReservationUserType
+from models import ReservationUserType
 from routes.genre import get_genre_service, router
-from sqlalchemy.exc import OperationalError
 
 
 def make_genre(**overrides):
-    defaults = dict(id=uuid4(), name="Action")
+    defaults = dict(id=str(uuid4()), name="Action", created_at=None)
     defaults.update(overrides)
-    return Genre(**defaults)
+    return defaults
 
 
 def make_client(service: AsyncMock, *, as_admin: bool = False) -> TestClient:
@@ -24,15 +23,6 @@ def make_client(service: AsyncMock, *, as_admin: bool = False) -> TestClient:
             user_id=uuid4(), type=ReservationUserType.ADMIN
         )
     return TestClient(app)
-
-
-class TestGetGenreService:
-    def test_builds_a_service_from_its_session_dependency(self):
-        session = AsyncMock()
-
-        service = get_genre_service(session=session)
-
-        assert service.session is session
 
 
 class TestCreateGenre:
@@ -64,15 +54,6 @@ class TestCreateGenre:
 
         assert response.status_code == 409
 
-    def test_db_outage_returns_503(self):
-        service = AsyncMock()
-        service.create.side_effect = OperationalError("stmt", {}, Exception("down"))
-        client = make_client(service, as_admin=True)
-
-        response = client.post("/genres", json={"name": "Action"})
-
-        assert response.status_code == 503
-
 
 class TestListGenres:
     def test_returns_all_genres_without_authentication(self):
@@ -85,15 +66,6 @@ class TestListGenres:
         assert response.status_code == 200
         assert len(response.json()["data"]) == 1
 
-    def test_db_outage_returns_503(self):
-        service = AsyncMock()
-        service.list.side_effect = OperationalError("stmt", {}, Exception("down"))
-        client = make_client(service)
-
-        response = client.get("/genres")
-
-        assert response.status_code == 503
-
 
 class TestGetGenre:
     def test_returns_the_genre_without_authentication(self):
@@ -102,7 +74,7 @@ class TestGetGenre:
         service.get.return_value = genre
         client = make_client(service)
 
-        response = client.get(f"/genres/{genre.id}")
+        response = client.get(f"/genres/{genre['id']}")
 
         assert response.status_code == 200
         assert response.json()["data"]["name"] == "Action"
@@ -116,15 +88,6 @@ class TestGetGenre:
 
         assert response.status_code == 404
 
-    def test_db_outage_returns_503(self):
-        service = AsyncMock()
-        service.get.side_effect = OperationalError("stmt", {}, Exception("down"))
-        client = make_client(service)
-
-        response = client.get(f"/genres/{uuid4()}")
-
-        assert response.status_code == 503
-
 
 class TestUpdateGenre:
     def test_admin_can_update_a_genre(self):
@@ -133,7 +96,7 @@ class TestUpdateGenre:
         service.update.return_value = genre
         client = make_client(service, as_admin=True)
 
-        response = client.patch(f"/genres/{genre.id}", json={"name": "Comedy"})
+        response = client.patch(f"/genres/{genre['id']}", json={"name": "Comedy"})
 
         assert response.status_code == 200
         assert response.json()["data"]["name"] == "Comedy"
@@ -165,15 +128,6 @@ class TestUpdateGenre:
 
         assert response.status_code == 409
 
-    def test_db_outage_returns_503(self):
-        service = AsyncMock()
-        service.update.side_effect = OperationalError("stmt", {}, Exception("down"))
-        client = make_client(service, as_admin=True)
-
-        response = client.patch(f"/genres/{uuid4()}", json={"name": "Comedy"})
-
-        assert response.status_code == 503
-
 
 class TestDeleteGenre:
     def test_admin_can_delete_a_genre(self):
@@ -202,12 +156,3 @@ class TestDeleteGenre:
         response = client.delete(f"/genres/{uuid4()}")
 
         assert response.status_code == 404
-
-    def test_db_outage_returns_503(self):
-        service = AsyncMock()
-        service.delete.side_effect = OperationalError("stmt", {}, Exception("down"))
-        client = make_client(service, as_admin=True)
-
-        response = client.delete(f"/genres/{uuid4()}")
-
-        assert response.status_code == 503

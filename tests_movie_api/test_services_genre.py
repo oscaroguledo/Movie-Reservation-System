@@ -1,154 +1,105 @@
-from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from unittest.mock import AsyncMock
+from uuid import UUID, uuid4
 
 import pytest
-from models import Genre
+from repository.genre.redis import GenreRedisRepository
 from schemas.genre import GenreCreate, GenreUpdate
 from services.genre import GenreService
-from sqlalchemy.exc import IntegrityError, OperationalError
 
 
 def make_service():
-    session = AsyncMock()
-    session.add = MagicMock()  # AsyncSession.add() is synchronous, unlike the rest of the API
-    return GenreService(session=session), session
+    producer = AsyncMock()
+    return GenreService(redis_repo=GenreRedisRepository(), producer=producer), producer
 
 
-def make_genre(**overrides):
-    defaults = dict(id=uuid4(), name="Action")
-    defaults.update(overrides)
-    return Genre(**defaults)
+def uuid_from(id_str: str) -> UUID:
+    return UUID(id_str)
 
 
 class TestCreate:
-    async def test_saves_and_returns_the_genre(self):
-        service, session = make_service()
+    async def test_saves_to_redis_and_publishes_an_event(self, fake_redis):
+        service, producer = make_service()
 
         genre = await service.create(GenreCreate(name="Action"))
 
-        assert genre.name == "Action"
-        session.add.assert_called_once_with(genre)
-        session.commit.assert_awaited_once()
-        session.refresh.assert_awaited_once_with(genre)
+        assert genre["name"] == "Action"
+        again = await service.get(uuid_from(genre["id"]))
+        assert again == genre
+        producer.publish.assert_awaited_once()
+        topic, event = producer.publish.await_args.args
+        assert topic == "movies"
+        assert event.payload["name"] == "Action"
 
-    async def test_duplicate_name_rolls_back_and_raises_value_error(self):
-        service, session = make_service()
-        session.commit.side_effect = IntegrityError("stmt", {}, Exception("dup"))
+    async def test_duplicate_name_raises_value_error(self, fake_redis):
+        service, _ = make_service()
+        await service.create(GenreCreate(name="Action"))
 
         with pytest.raises(ValueError, match="Genre already exists"):
             await service.create(GenreCreate(name="Action"))
-
-        session.rollback.assert_awaited_once()
-
-    async def test_db_outage_rolls_back_and_reraises(self):
-        service, session = make_service()
-        session.commit.side_effect = OperationalError("stmt", {}, Exception("down"))
-
-        with pytest.raises(OperationalError):
-            await service.create(GenreCreate(name="Action"))
-
-        session.rollback.assert_awaited_once()
-
-
-class TestList:
-    async def test_returns_all_genres(self):
-        service, session = make_service()
-        existing = make_genre()
-        session.execute.return_value = MagicMock(scalars=lambda: MagicMock(all=lambda: [existing]))
-
-        genres = await service.list()
-
-        assert genres == [existing]
-
-    async def test_db_outage_reraises(self):
-        service, session = make_service()
-        session.execute.side_effect = OperationalError("stmt", {}, Exception("down"))
-
-        with pytest.raises(OperationalError):
-            await service.list()
 
 
 class TestGet:
-    async def test_returns_the_genre_when_found(self):
-        service, session = make_service()
-        existing = make_genre()
-        session.get.return_value = existing
+    async def test_returns_none_when_not_found(self, fake_redis):
+        service, _ = make_service()
 
-        genre = await service.get(existing.id)
+        assert await service.get(uuid4()) is None
 
-        assert genre is existing
 
-    async def test_returns_none_when_not_found(self):
-        service, session = make_service()
-        session.get.return_value = None
+class TestList:
+    async def test_returns_created_genres(self, fake_redis):
+        service, _ = make_service()
+        await service.create(GenreCreate(name="Action"))
+        await service.create(GenreCreate(name="Comedy"))
 
-        genre = await service.get(uuid4())
+        genres = await service.list()
 
-        assert genre is None
+        assert {genre["name"] for genre in genres} == {"Action", "Comedy"}
 
 
 class TestUpdate:
-    async def test_returns_none_when_genre_not_found(self):
-        service, session = make_service()
-        session.get.return_value = None
+    async def test_renames_and_publishes_an_event(self, fake_redis):
+        service, producer = make_service()
+        genre = await service.create(GenreCreate(name="Action"))
 
-        genre = await service.update(uuid4(), GenreUpdate(name="Comedy"))
+        updated = await service.update(uuid_from(genre["id"]), GenreUpdate(name="Adventure"))
 
-        assert genre is None
-        session.commit.assert_not_called()
+        assert updated["name"] == "Adventure"
+        assert producer.publish.await_count == 2
 
-    async def test_updates_the_name(self):
-        service, session = make_service()
-        existing = make_genre()
-        session.get.return_value = existing
+    async def test_returns_none_when_not_found(self, fake_redis):
+        service, _ = make_service()
 
-        genre = await service.update(existing.id, GenreUpdate(name="Comedy"))
+        assert await service.update(uuid4(), GenreUpdate(name="X")) is None
 
-        assert genre is existing
-        assert genre.name == "Comedy"
-        session.commit.assert_awaited_once()
-        session.refresh.assert_awaited_once_with(existing)
-
-    async def test_duplicate_name_rolls_back_and_raises_value_error(self):
-        service, session = make_service()
-        existing = make_genre()
-        session.get.return_value = existing
-        session.commit.side_effect = IntegrityError("stmt", {}, Exception("dup"))
+    async def test_renaming_to_a_taken_name_raises_value_error(self, fake_redis):
+        service, _ = make_service()
+        await service.create(GenreCreate(name="Action"))
+        comedy = await service.create(GenreCreate(name="Comedy"))
 
         with pytest.raises(ValueError, match="Genre already exists"):
-            await service.update(existing.id, GenreUpdate(name="Comedy"))
-
-        session.rollback.assert_awaited_once()
-
-    async def test_db_outage_rolls_back_and_reraises(self):
-        service, session = make_service()
-        existing = make_genre()
-        session.get.return_value = existing
-        session.commit.side_effect = OperationalError("stmt", {}, Exception("down"))
-
-        with pytest.raises(OperationalError):
-            await service.update(existing.id, GenreUpdate(name="Comedy"))
-
-        session.rollback.assert_awaited_once()
+            await service.update(uuid_from(comedy["id"]), GenreUpdate(name="Action"))
 
 
 class TestDelete:
-    async def test_returns_false_when_genre_not_found(self):
-        service, session = make_service()
-        session.get.return_value = None
+    async def test_deletes_and_publishes_an_event(self, fake_redis):
+        service, producer = make_service()
+        genre = await service.create(GenreCreate(name="Action"))
 
-        deleted = await service.delete(uuid4())
-
-        assert deleted is False
-        session.delete.assert_not_called()
-
-    async def test_deletes_and_returns_true(self):
-        service, session = make_service()
-        existing = make_genre()
-        session.get.return_value = existing
-
-        deleted = await service.delete(existing.id)
+        deleted = await service.delete(uuid_from(genre["id"]))
 
         assert deleted is True
-        session.delete.assert_awaited_once_with(existing)
-        session.commit.assert_awaited_once()
+        assert await service.get(uuid_from(genre["id"])) is None
+
+    async def test_returns_false_when_not_found(self, fake_redis):
+        service, _ = make_service()
+
+        assert await service.delete(uuid4()) is False
+
+    async def test_frees_the_name_for_reuse(self, fake_redis):
+        service, _ = make_service()
+        genre = await service.create(GenreCreate(name="Action"))
+        await service.delete(uuid_from(genre["id"]))
+
+        recreated = await service.create(GenreCreate(name="Action"))
+
+        assert recreated["name"] == "Action"

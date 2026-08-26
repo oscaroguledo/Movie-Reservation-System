@@ -7,11 +7,13 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from movie_api.repository.screening.postgresql import ScreeningNotFoundError
-
 logger = logging.getLogger(__name__)
 
 _ACTIVE_STATUSES = (ReservationStatus.PENDING, ReservationStatus.CONFIRMED)
+
+
+class ScreeningNotFoundError(ValueError):
+    """Raised when a reporting query targets a screening that doesn't exist."""
 
 
 class ReportingService:

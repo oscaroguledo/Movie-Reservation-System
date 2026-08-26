@@ -1,18 +1,13 @@
 from uuid import UUID
 
 from core.auth import Principal, require_admin
-from core.kafka import KafkaProducer, get_kafka_producer
+from core.dependencies import get_genre_service
 from core.response import APIResponse, EResponse, SResponse
 from fastapi import APIRouter, Depends, Response
-from repository.genre.redis import GenreRedisRepository
 from schemas.genre import GenreCreate, GenreUpdate
 from services.genre import GenreService
 
 router = APIRouter()
-
-
-def get_genre_service(producer: KafkaProducer = Depends(get_kafka_producer)) -> GenreService:
-    return GenreService(redis_repo=GenreRedisRepository(), producer=producer)
 
 
 @router.post("/genres", response_model=APIResponse[dict])

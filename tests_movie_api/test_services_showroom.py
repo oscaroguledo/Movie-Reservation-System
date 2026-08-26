@@ -1,203 +1,109 @@
-from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from unittest.mock import AsyncMock
+from uuid import UUID, uuid4
 
 import pytest
-from models import Showroom
+from repository.showroom.redis import ShowroomRedisRepository
 from schemas.showroom import ShowroomCreate, ShowroomUpdate
 from services.showroom import ShowroomService
-from sqlalchemy.exc import IntegrityError, OperationalError
 
 
 def make_service():
-    session = AsyncMock()
-    session.add = MagicMock()  # AsyncSession.add()/add_all() are synchronous, unlike the rest
-    session.add_all = MagicMock()
-    return ShowroomService(session=session), session
+    producer = AsyncMock()
+    return ShowroomService(redis_repo=ShowroomRedisRepository(), producer=producer), producer
 
 
-def make_showroom(**overrides):
-    defaults = dict(id=uuid4(), name="Room 1", capacity=120)
-    defaults.update(overrides)
-    return Showroom(**defaults)
+def uuid_from(id_str: str) -> UUID:
+    return UUID(id_str)
 
 
 class TestCreate:
-    async def test_saves_and_returns_the_showroom(self):
-        service, session = make_service()
+    async def test_saves_and_publishes_an_event(self, fake_redis):
+        service, producer = make_service()
 
         showroom = await service.create(ShowroomCreate(name="Room 1", capacity=120))
 
-        assert showroom.name == "Room 1"
-        assert showroom.capacity == 120
-        session.add.assert_called_once_with(showroom)
-        session.commit.assert_awaited_once()
-        session.refresh.assert_awaited_once_with(showroom)
+        assert showroom["name"] == "Room 1"
+        assert showroom["capacity"] == 120
+        producer.publish.assert_awaited_once()
 
-    async def test_duplicate_name_rolls_back_and_raises_value_error(self):
-        service, session = make_service()
-        session.commit.side_effect = IntegrityError("stmt", {}, Exception("dup"))
+    async def test_duplicate_name_raises_value_error(self, fake_redis):
+        service, _ = make_service()
+        await service.create(ShowroomCreate(name="Room 1", capacity=120))
 
         with pytest.raises(ValueError, match="Showroom already exists"):
-            await service.create(ShowroomCreate(name="Room 1", capacity=120))
-
-        session.rollback.assert_awaited_once()
-
-    async def test_db_outage_rolls_back_and_reraises(self):
-        service, session = make_service()
-        session.commit.side_effect = OperationalError("stmt", {}, Exception("down"))
-
-        with pytest.raises(OperationalError):
-            await service.create(ShowroomCreate(name="Room 1", capacity=120))
-
-        session.rollback.assert_awaited_once()
-
-
-class TestList:
-    async def test_returns_all_showrooms(self):
-        service, session = make_service()
-        existing = make_showroom()
-        session.execute.return_value = MagicMock(scalars=lambda: MagicMock(all=lambda: [existing]))
-
-        showrooms = await service.list()
-
-        assert showrooms == [existing]
-
-    async def test_db_outage_reraises(self):
-        service, session = make_service()
-        session.execute.side_effect = OperationalError("stmt", {}, Exception("down"))
-
-        with pytest.raises(OperationalError):
-            await service.list()
+            await service.create(ShowroomCreate(name="Room 1", capacity=50))
 
 
 class TestGet:
-    async def test_returns_the_showroom_when_found(self):
-        service, session = make_service()
-        existing = make_showroom()
-        session.get.return_value = existing
+    async def test_returns_none_when_not_found(self, fake_redis):
+        service, _ = make_service()
 
-        showroom = await service.get(existing.id)
+        assert await service.get(uuid4()) is None
 
-        assert showroom is existing
 
-    async def test_returns_none_when_not_found(self):
-        service, session = make_service()
-        session.get.return_value = None
+class TestList:
+    async def test_returns_created_showrooms(self, fake_redis):
+        service, _ = make_service()
+        await service.create(ShowroomCreate(name="Room 1", capacity=120))
+        await service.create(ShowroomCreate(name="Room 2", capacity=80))
 
-        showroom = await service.get(uuid4())
+        showrooms = await service.list()
 
-        assert showroom is None
+        assert {s["name"] for s in showrooms} == {"Room 1", "Room 2"}
 
 
 class TestUpdate:
-    async def test_returns_none_when_showroom_not_found(self):
-        service, session = make_service()
-        session.get.return_value = None
+    async def test_returns_none_when_not_found(self, fake_redis):
+        service, _ = make_service()
 
-        showroom = await service.update(uuid4(), ShowroomUpdate(name="Room 2"))
+        assert await service.update(uuid4(), ShowroomUpdate(name="X")) is None
 
-        assert showroom is None
-        session.commit.assert_not_called()
+    async def test_updates_capacity_only(self, fake_redis):
+        service, _ = make_service()
+        showroom = await service.create(ShowroomCreate(name="Room 1", capacity=120))
 
-    async def test_updates_provided_fields_only(self):
-        service, session = make_service()
-        existing = make_showroom()
-        session.get.return_value = existing
+        updated = await service.update(uuid_from(showroom["id"]), ShowroomUpdate(capacity=200))
 
-        showroom = await service.update(existing.id, ShowroomUpdate(name="Room 2"))
+        assert updated["name"] == "Room 1"
+        assert updated["capacity"] == 200
 
-        assert showroom is existing
-        assert showroom.name == "Room 2"
-        assert showroom.capacity == 120
-        session.commit.assert_awaited_once()
-        session.refresh.assert_awaited_once_with(existing)
-
-    async def test_updates_capacity_only(self):
-        service, session = make_service()
-        existing = make_showroom()
-        session.get.return_value = existing
-
-        showroom = await service.update(existing.id, ShowroomUpdate(capacity=200))
-
-        assert showroom.name == "Room 1"
-        assert showroom.capacity == 200
-
-    async def test_duplicate_name_rolls_back_and_raises_value_error(self):
-        service, session = make_service()
-        existing = make_showroom()
-        session.get.return_value = existing
-        session.commit.side_effect = IntegrityError("stmt", {}, Exception("dup"))
+    async def test_renaming_to_a_taken_name_raises_value_error(self, fake_redis):
+        service, _ = make_service()
+        await service.create(ShowroomCreate(name="Room 1", capacity=120))
+        room2 = await service.create(ShowroomCreate(name="Room 2", capacity=80))
 
         with pytest.raises(ValueError, match="Showroom already exists"):
-            await service.update(existing.id, ShowroomUpdate(name="Room 2"))
-
-        session.rollback.assert_awaited_once()
-
-    async def test_db_outage_rolls_back_and_reraises(self):
-        service, session = make_service()
-        existing = make_showroom()
-        session.get.return_value = existing
-        session.commit.side_effect = OperationalError("stmt", {}, Exception("down"))
-
-        with pytest.raises(OperationalError):
-            await service.update(existing.id, ShowroomUpdate(name="Room 2"))
-
-        session.rollback.assert_awaited_once()
+            await service.update(uuid_from(room2["id"]), ShowroomUpdate(name="Room 1"))
 
 
 class TestDelete:
-    async def test_returns_false_when_showroom_not_found(self):
-        service, session = make_service()
-        session.get.return_value = None
+    async def test_returns_false_when_not_found(self, fake_redis):
+        service, _ = make_service()
 
-        deleted = await service.delete(uuid4())
+        assert await service.delete(uuid4()) is False
 
-        assert deleted is False
-        session.delete.assert_not_called()
+    async def test_deletes_and_publishes_an_event(self, fake_redis):
+        service, producer = make_service()
+        showroom = await service.create(ShowroomCreate(name="Room 1", capacity=120))
+        producer.reset_mock()
 
-    async def test_deletes_and_returns_true(self):
-        service, session = make_service()
-        existing = make_showroom()
-        session.get.return_value = existing
-
-        deleted = await service.delete(existing.id)
+        deleted = await service.delete(uuid_from(showroom["id"]))
 
         assert deleted is True
-        session.delete.assert_awaited_once_with(existing)
-        session.commit.assert_awaited_once()
-
-    async def test_fk_violation_rolls_back_and_raises_value_error(self):
-        service, session = make_service()
-        existing = make_showroom()
-        session.get.return_value = existing
-        session.commit.side_effect = IntegrityError("stmt", {}, Exception("fk violation"))
-
-        with pytest.raises(ValueError, match="Cannot delete a showroom"):
-            await service.delete(existing.id)
-
-        session.rollback.assert_awaited_once()
-
-    async def test_db_outage_rolls_back_and_reraises(self):
-        service, session = make_service()
-        existing = make_showroom()
-        session.get.return_value = existing
-        session.commit.side_effect = OperationalError("stmt", {}, Exception("down"))
-
-        with pytest.raises(OperationalError):
-            await service.delete(existing.id)
-
-        session.rollback.assert_awaited_once()
+        assert await service.get(uuid_from(showroom["id"])) is None
+        producer.publish.assert_awaited_once()
 
 
 class TestBulkCreateSeats:
-    async def test_creates_a_seat_for_every_row_number_combination(self):
-        service, session = make_service()
-        showroom_id = uuid4()
+    async def test_creates_a_seat_for_every_row_number_combination(self, fake_redis):
+        service, producer = make_service()
+        showroom = await service.create(ShowroomCreate(name="Room 1", capacity=120))
+        showroom_id = uuid_from(showroom["id"])
 
         seats = await service.bulk_create_seats(showroom_id, ["A", "B"], 3)
 
         assert len(seats) == 6
-        assert {(seat.row, seat.number) for seat in seats} == {
+        assert {(seat["row"], seat["number"]) for seat in seats} == {
             ("A", 1),
             ("A", 2),
             ("A", 3),
@@ -205,43 +111,30 @@ class TestBulkCreateSeats:
             ("B", 2),
             ("B", 3),
         }
-        assert all(seat.showroom_id == showroom_id for seat in seats)
-        session.add_all.assert_called_once_with(seats)
-        session.commit.assert_awaited_once()
+        producer.publish.assert_awaited()
 
-    async def test_duplicate_seats_roll_back_and_raise_value_error(self):
-        service, session = make_service()
-        session.commit.side_effect = IntegrityError("stmt", {}, Exception("dup"))
+    async def test_duplicate_seats_raise_value_error(self, fake_redis):
+        service, _ = make_service()
+        showroom = await service.create(ShowroomCreate(name="Room 1", capacity=120))
+        showroom_id = uuid_from(showroom["id"])
+        await service.bulk_create_seats(showroom_id, ["A"], 5)
 
         with pytest.raises(ValueError, match="already exist"):
-            await service.bulk_create_seats(uuid4(), ["A"], 5)
-
-        session.rollback.assert_awaited_once()
-
-    async def test_db_outage_rolls_back_and_reraises(self):
-        service, session = make_service()
-        session.commit.side_effect = OperationalError("stmt", {}, Exception("down"))
-
-        with pytest.raises(OperationalError):
-            await service.bulk_create_seats(uuid4(), ["A"], 5)
-
-        session.rollback.assert_awaited_once()
+            await service.bulk_create_seats(showroom_id, ["A"], 5)
 
 
 class TestListSeats:
-    async def test_returns_seats_for_the_showroom(self):
-        service, session = make_service()
-        showroom_id = uuid4()
-        session.execute.return_value = MagicMock(scalars=lambda: MagicMock(all=lambda: []))
+    async def test_returns_seats_for_the_showroom(self, fake_redis):
+        service, _ = make_service()
+        showroom = await service.create(ShowroomCreate(name="Room 1", capacity=120))
+        showroom_id = uuid_from(showroom["id"])
+        await service.bulk_create_seats(showroom_id, ["A"], 2)
 
         seats = await service.list_seats(showroom_id)
 
-        assert seats == []
-        session.execute.assert_awaited_once()
+        assert len(seats) == 2
 
-    async def test_db_outage_reraises(self):
-        service, session = make_service()
-        session.execute.side_effect = OperationalError("stmt", {}, Exception("down"))
+    async def test_returns_empty_list_for_a_showroom_with_no_seats(self, fake_redis):
+        service, _ = make_service()
 
-        with pytest.raises(OperationalError):
-            await service.list_seats(uuid4())
+        assert await service.list_seats(uuid4()) == []
