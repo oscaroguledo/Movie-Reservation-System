@@ -147,3 +147,48 @@ class TestGetScreeningsForDate:
                 datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc),
                 datetime(2026, 9, 1, 23, 59, tzinfo=timezone.utc),
             )
+
+
+class TestGetUpcomingScreenings:
+    async def test_returns_matching_rows(self, fake_redis):
+        repo, session = make_repo()
+        movie = Movie(id=uuid4(), title="Inception", description="x", poster_image_url="x.jpg")
+        showtime = Showtime(
+            id=uuid4(),
+            start_time=datetime(2026, 9, 1, 18, 0, tzinfo=timezone.utc),
+            end_time=datetime(2026, 9, 1, 20, 0, tzinfo=timezone.utc),
+            price=Decimal("12.50"),
+        )
+        showroom_id = uuid4()
+        session.execute.return_value = MagicMock(all=lambda: [(movie, showtime, showroom_id)])
+
+        rows = await repo.get_upcoming_screenings(datetime(2026, 9, 1, tzinfo=timezone.utc))
+
+        assert rows == [(movie, showtime, showroom_id)]
+
+    async def test_filters_by_movie_id(self, fake_redis):
+        repo, session = make_repo()
+        session.execute.return_value = MagicMock(all=lambda: [])
+
+        await repo.get_upcoming_screenings(
+            datetime(2026, 9, 1, tzinfo=timezone.utc), movie_id=uuid4()
+        )
+
+        session.execute.assert_awaited_once()
+
+    async def test_filters_by_showroom_id(self, fake_redis):
+        repo, session = make_repo()
+        session.execute.return_value = MagicMock(all=lambda: [])
+
+        await repo.get_upcoming_screenings(
+            datetime(2026, 9, 1, tzinfo=timezone.utc), showroom_id=uuid4()
+        )
+
+        session.execute.assert_awaited_once()
+
+    async def test_db_outage_reraises(self, fake_redis):
+        repo, session = make_repo()
+        session.execute.side_effect = OperationalError("s", {}, Exception())
+
+        with pytest.raises(OperationalError):
+            await repo.get_upcoming_screenings(datetime(2026, 9, 1, tzinfo=timezone.utc))

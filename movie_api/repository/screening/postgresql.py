@@ -99,3 +99,32 @@ class ScreeningPostgresRepository:
             raise
 
         return list(result.all())
+
+    async def get_upcoming_screenings(
+        self,
+        after: datetime,
+        *,
+        movie_id: UUID | None = None,
+        showroom_id: UUID | None = None,
+    ) -> list[tuple[Movie, Showtime, UUID]]:
+        """Cross-date browse (by movie and/or showroom); unlike
+        get_screenings_for_date, this always reads Postgres directly."""
+        query = (
+            select(Movie, Showtime, MovieShowtime.showroom_id)
+            .join(MovieShowtime, MovieShowtime.movie_id == Movie.id)
+            .join(Showtime, Showtime.id == MovieShowtime.showtime_id)
+            .where(Showtime.start_time >= after)
+            .order_by(Showtime.start_time)
+        )
+        if movie_id is not None:
+            query = query.where(MovieShowtime.movie_id == movie_id)
+        if showroom_id is not None:
+            query = query.where(MovieShowtime.showroom_id == showroom_id)
+
+        try:
+            result = await self.session.execute(query)
+        except OperationalError:
+            logger.error("Database unavailable while listing screenings — safe to retry")
+            raise
+
+        return list(result.all())

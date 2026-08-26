@@ -155,6 +155,20 @@ class ScreeningService:
 
         return sorted(results, key=lambda item: item["showtime"]["start_time"])
 
+    async def list_upcoming(
+        self, *, movie_id: UUID | None = None, showroom_id: UUID | None = None
+    ) -> list[dict[str, Any]]:
+        """Cross-date browse by movie and/or showroom, e.g. "everything
+        upcoming for this movie" without querying day by day."""
+        now = datetime.now(timezone.utc)
+        rows = await ScreeningPostgresRepository(self.session).get_upcoming_screenings(
+            now, movie_id=movie_id, showroom_id=showroom_id
+        )
+        return [
+            {"movie": movie.to_dict(), "showtime": showtime.to_dict(), "showroom_id": str(room_id)}
+            for movie, showtime, room_id in rows
+        ]
+
     async def delete(self, movie_id: UUID, showroom_id: UUID, showtime_id: UUID) -> bool:
         if not await self._screening_exists(movie_id, showroom_id, showtime_id):
             return False

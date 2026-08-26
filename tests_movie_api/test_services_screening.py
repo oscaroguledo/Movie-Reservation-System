@@ -1,8 +1,10 @@
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
+from models import Movie, Showtime
 from repository.genre.redis import GenreRedisRepository
 from repository.movie.redis import MovieRedisRepository
 from repository.reservation.redis import ReservationRedisRepository
@@ -139,6 +141,37 @@ class TestListForDate:
         service, _, _, _, _ = await make_service(fake_redis)
 
         assert await service.list_for_date(date(2026, 9, 1)) == []
+
+
+class TestListUpcoming:
+    async def test_returns_empty_when_nothing_scheduled(self, fake_redis):
+        service, _, movie_id, _, _ = await make_service(fake_redis)
+
+        assert await service.list_upcoming(movie_id=movie_id) == []
+
+    async def test_maps_postgres_rows_into_the_response_shape(self, fake_redis):
+        service, _, movie_id, showroom_id, _ = await make_service(fake_redis)
+        movie = Movie(id=movie_id, title="Inception", description="x", poster_image_url="x.jpg")
+        showtime = Showtime(
+            id=uuid4(),
+            start_time=datetime(2026, 9, 1, 18, 0, tzinfo=timezone.utc),
+            end_time=datetime(2026, 9, 1, 20, 0, tzinfo=timezone.utc),
+            price=Decimal("12.50"),
+        )
+        service.session.execute.return_value = MagicMock(
+            all=lambda: [(movie, showtime, showroom_id)]
+        )
+
+        results = await service.list_upcoming(movie_id=movie_id)
+
+        assert len(results) == 1
+        assert results[0]["movie"]["title"] == "Inception"
+        assert results[0]["showroom_id"] == str(showroom_id)
+
+    async def test_filters_by_showroom_id(self, fake_redis):
+        service, _, _, showroom_id, _ = await make_service(fake_redis)
+
+        assert await service.list_upcoming(showroom_id=showroom_id) == []
 
 
 class TestDelete:

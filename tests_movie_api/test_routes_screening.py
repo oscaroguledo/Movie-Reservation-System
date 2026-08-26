@@ -1,5 +1,5 @@
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from core.auth import Principal, require_admin
 from fastapi import FastAPI
@@ -80,6 +80,41 @@ class TestListScreenings:
         assert response.status_code == 200
         data = response.json()["data"]
         assert data[0]["movie"]["title"] == "Inception"
+
+    def test_returns_upcoming_screenings_for_a_movie_across_dates(self):
+        service = AsyncMock()
+        service.list_upcoming.return_value = [
+            {"movie": {"title": "Inception"}, "showtime": {}, "showroom_id": str(uuid4())}
+        ]
+        client = make_client(service)
+        movie_id = str(uuid4())
+
+        response = client.get("/screenings", params={"movie_id": movie_id})
+
+        assert response.status_code == 200
+        service.list_upcoming.assert_awaited_once_with(movie_id=UUID(movie_id), showroom_id=None)
+        service.list_for_date.assert_not_called()
+
+    def test_returns_upcoming_screenings_for_a_showroom(self):
+        service = AsyncMock()
+        service.list_upcoming.return_value = []
+        client = make_client(service)
+        showroom_id = str(uuid4())
+
+        response = client.get("/screenings", params={"showroom_id": showroom_id})
+
+        assert response.status_code == 200
+        service.list_upcoming.assert_awaited_once_with(movie_id=None, showroom_id=UUID(showroom_id))
+
+    def test_requires_at_least_one_filter(self):
+        service = AsyncMock()
+        client = make_client(service)
+
+        response = client.get("/screenings")
+
+        assert response.status_code == 422
+        service.list_for_date.assert_not_called()
+        service.list_upcoming.assert_not_called()
 
 
 class TestDeleteScreening:

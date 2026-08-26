@@ -31,10 +31,21 @@ async def schedule_screening(
 @router.get("/screenings", response_model=APIResponse[list[dict]])
 async def list_screenings(
     response: Response,
-    show_date: date,
+    show_date: date | None = None,
+    movie_id: UUID | None = None,
+    showroom_id: UUID | None = None,
     screening_service: ScreeningService = Depends(get_screening_service),
 ) -> APIResponse:
-    rows = await screening_service.list_for_date(show_date)
+    if show_date is not None:
+        rows = await screening_service.list_for_date(show_date)
+    elif movie_id is not None or showroom_id is not None:
+        rows = await screening_service.list_upcoming(movie_id=movie_id, showroom_id=showroom_id)
+    else:
+        response.status_code = 422
+        return EResponse(
+            message="Provide show_date, movie_id, or showroom_id", status=422
+        )
+
     return SResponse(data=rows, message="Screenings retrieved", status=200)
 
 
