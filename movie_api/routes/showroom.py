@@ -104,6 +104,10 @@ async def create_showroom_seats(
         response.status_code = 409
         return EResponse(message=str(exc), status=409)
 
+    if seats is None:
+        response.status_code = 404
+        return EResponse(message="Showroom not found", status=404)
+
     response.status_code = 201
     return SResponse(data=seats, message="Seats created", status=201)
 

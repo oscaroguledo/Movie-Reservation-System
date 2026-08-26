@@ -130,6 +130,28 @@ class TestBulkCreateSeats:
         with pytest.raises(ValueError, match="already exist"):
             await service.bulk_create_seats(showroom_id, ["A"], 5)
 
+    async def test_returns_none_when_showroom_not_found(self, fake_redis):
+        service, _ = make_service()
+
+        assert await service.bulk_create_seats(uuid4(), ["A"], 1) is None
+
+    async def test_exceeding_capacity_raises_value_error(self, fake_redis):
+        service, _ = make_service()
+        showroom = await service.create(ShowroomCreate(name="Room 1", capacity=5))
+        showroom_id = uuid_from(showroom["id"])
+
+        with pytest.raises(ValueError, match="exceed showroom capacity"):
+            await service.bulk_create_seats(showroom_id, ["A"], 6)
+
+    async def test_capacity_check_accounts_for_already_created_seats(self, fake_redis):
+        service, _ = make_service()
+        showroom = await service.create(ShowroomCreate(name="Room 1", capacity=5))
+        showroom_id = uuid_from(showroom["id"])
+        await service.bulk_create_seats(showroom_id, ["A"], 3)
+
+        with pytest.raises(ValueError, match="exceed showroom capacity"):
+            await service.bulk_create_seats(showroom_id, ["B"], 3)
+
 
 class TestListSeats:
     async def test_returns_seats_for_the_showroom(self, fake_redis):

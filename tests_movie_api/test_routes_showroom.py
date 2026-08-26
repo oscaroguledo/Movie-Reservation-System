@@ -201,6 +201,17 @@ class TestCreateShowroomSeats:
 
         assert response.status_code == 409
 
+    def test_returns_404_when_showroom_not_found(self):
+        service = AsyncMock()
+        service.bulk_create_seats.return_value = None
+        client = make_client(service, as_admin=True)
+
+        response = client.post(
+            f"/showrooms/{uuid4()}/seats", json={"rows": ["A"], "seats_per_row": 10}
+        )
+
+        assert response.status_code == 404
+
 
 class TestListShowroomSeats:
     def test_returns_seats_without_authentication(self):

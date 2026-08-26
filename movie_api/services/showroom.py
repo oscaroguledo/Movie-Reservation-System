@@ -41,7 +41,19 @@ class ShowroomService:
     # own note on the list()/list[...] annotation-ordering bug.
     async def bulk_create_seats(
         self, showroom_id: UUID, rows: list[str], seats_per_row: int
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str, Any]] | None:
+        showroom = await self.get(showroom_id)
+        if showroom is None:
+            return None
+
+        existing = await self.list_seats(showroom_id)
+        new_count = len(rows) * seats_per_row
+        if len(existing) + new_count > showroom["capacity"]:
+            raise ValueError(
+                f"Adding {new_count} seat(s) would exceed showroom capacity of "
+                f"{showroom['capacity']} ({len(existing)} seat(s) already exist)"
+            )
+
         now = datetime.now(timezone.utc).isoformat()
         seats = []
         for row in rows:
@@ -51,10 +63,7 @@ class ShowroomService:
                     showroom_id, row, number, seat_id
                 )
                 if not claimed:
-                    raise ValueError(
-                        "One or more seats already exist for this showroom, "
-                        "or the showroom does not exist"
-                    )
+                    raise ValueError("One or more seats already exist for this showroom")
                 seats.append(
                     {
                         "id": str(seat_id),
