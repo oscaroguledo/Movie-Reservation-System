@@ -46,15 +46,15 @@ async def test_start_and_stop_delegate_to_underlying_producer(mock_aiokafka_prod
     instance.stop.assert_awaited_once()
 
 
-async def test_publish_sends_serialized_event_keyed_by_event_id(mock_aiokafka_producer):
+async def test_publish_sends_serialized_message_keyed_by_the_given_key(mock_aiokafka_producer):
     _, instance = mock_aiokafka_producer
     producer = KafkaProducer()
     event = Event(event_type=EventType.MOVIE_CREATED, payload={"title": "Inception"})
 
-    await producer.publish("movies", event)
+    await producer.publish("movies", event, key="movie-id-123")
 
     instance.send_and_wait.assert_awaited_once_with(
-        "movies", value=event.to_bytes(), key=event.event_id.encode("utf-8")
+        "movies", value=event.to_bytes(), key=b"movie-id-123"
     )
 
 

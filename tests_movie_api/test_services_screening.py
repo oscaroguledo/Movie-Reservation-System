@@ -1,28 +1,54 @@
 from datetime import date, datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from unittest.mock import AsyncMock
+from uuid import UUID, uuid4
 
 import pytest
-from models import Movie, MovieShowtime, ReservationStatus, ShowroomSeat, Showtime
+from repository.genre.redis import GenreRedisRepository
+from repository.movie.redis import MovieRedisRepository
+from repository.reservation.redis import ReservationRedisRepository
+from repository.screening.redis import ScreeningRedisRepository
+from repository.showroom.redis import ShowroomRedisRepository
+from schemas.movie import MovieCreate
 from schemas.screening import ScreeningCreate
-from services.screening import (
-    OverlappingScreeningError,
-    ScreeningNotFoundError,
-    ScreeningService,
-)
-from sqlalchemy.exc import IntegrityError, OperationalError
+from schemas.showroom import ShowroomCreate
+from services.genre import GenreService
+from services.movie import MovieService
+from services.screening import OverlappingScreeningError, ScreeningNotFoundError, ScreeningService
+from services.showroom import ShowroomService
 
 
-def make_service():
-    session = AsyncMock()
-    session.add = MagicMock()  # AsyncSession.add() is synchronous, unlike the rest of the API
-    return ScreeningService(session=session), session
+def uuid_from(id_str: str) -> UUID:
+    return UUID(id_str)
 
 
-def make_screening_create(**overrides):
+async def make_service(fake_redis):
+    producer = AsyncMock()
+    genre_service = GenreService(redis_repo=GenreRedisRepository(), producer=producer)
+    movie_service = MovieService(
+        redis_repo=MovieRedisRepository(), producer=producer, genre_service=genre_service
+    )
+    showroom_service = ShowroomService(redis_repo=ShowroomRedisRepository(), producer=producer)
+    reservation_redis_repo = ReservationRedisRepository()
+
+    movie = await movie_service.create(
+        MovieCreate(title="Inception", description="x", poster_image_url="x.jpg")
+    )
+    showroom = await showroom_service.create(ShowroomCreate(name="Room 1", capacity=10))
+
+    service = ScreeningService(
+        redis_repo=ScreeningRedisRepository(),
+        producer=producer,
+        movie_service=movie_service,
+        showroom_service=showroom_service,
+        reservation_redis_repo=reservation_redis_repo,
+    )
+    return service, producer, uuid_from(movie["id"]), uuid_from(showroom["id"]), showroom_service
+
+
+def make_screening_create(movie_id, showroom_id, **overrides):
     defaults = dict(
-        movie_id=uuid4(),
-        showroom_id=uuid4(),
+        movie_id=movie_id,
+        showroom_id=showroom_id,
         start_time=datetime(2026, 9, 1, 18, 0, tzinfo=timezone.utc),
         end_time=datetime(2026, 9, 1, 20, 0, tzinfo=timezone.utc),
         price="12.50",
@@ -31,182 +57,151 @@ def make_screening_create(**overrides):
     return ScreeningCreate(**defaults)
 
 
-def no_overlap_result():
-    return MagicMock(first=lambda: None)
-
-
-def overlap_found_result():
-    return MagicMock(first=lambda: (uuid4(),))
-
-
 class TestSchedule:
-    async def test_locks_the_showroom_before_checking_for_overlap(self):
-        service, session = make_service()
-        session.execute.side_effect = [MagicMock(), no_overlap_result()]
+    async def test_schedules_and_publishes_an_event(self, fake_redis):
+        service, producer, movie_id, showroom_id, _ = await make_service(fake_redis)
 
-        screening_create = make_screening_create()
-        await service.schedule(screening_create)
+        screening = await service.schedule(make_screening_create(movie_id, showroom_id))
 
-        lock_call = session.execute.await_args_list[0]
-        lock_sql = str(lock_call.args[0])
-        assert "pg_advisory_xact_lock" in lock_sql
-        assert lock_call.args[1] == {"showroom_id": str(screening_create.showroom_id)}
+        assert screening["movie_id"] == str(movie_id)
+        assert screening["showroom_id"] == str(showroom_id)
+        producer.publish.assert_awaited()
 
-    async def test_creates_the_showtime_and_junction_row_when_no_overlap(self):
-        service, session = make_service()
-        session.execute.side_effect = [MagicMock(), no_overlap_result()]
-
-        screening_create = make_screening_create()
-        movie_showtime = await service.schedule(screening_create)
-
-        assert isinstance(movie_showtime, MovieShowtime)
-        assert movie_showtime.movie_id == screening_create.movie_id
-        assert movie_showtime.showroom_id == screening_create.showroom_id
-        session.flush.assert_awaited_once()
-        session.commit.assert_awaited_once()
-        assert session.add.call_count == 2
-
-    async def test_rejects_an_overlapping_screening(self):
-        service, session = make_service()
-        session.execute.side_effect = [MagicMock(), overlap_found_result()]
+    async def test_rejects_an_overlapping_screening_in_the_same_room(self, fake_redis):
+        service, _, movie_id, showroom_id, _ = await make_service(fake_redis)
+        await service.schedule(make_screening_create(movie_id, showroom_id))
 
         with pytest.raises(OverlappingScreeningError):
-            await service.schedule(make_screening_create())
+            await service.schedule(
+                make_screening_create(
+                    movie_id,
+                    showroom_id,
+                    start_time=datetime(2026, 9, 1, 19, 0, tzinfo=timezone.utc),
+                    end_time=datetime(2026, 9, 1, 21, 0, tzinfo=timezone.utc),
+                )
+            )
 
-        session.rollback.assert_awaited_once()
-        session.add.assert_not_called()
-        session.commit.assert_not_called()
+    async def test_allows_a_non_overlapping_screening_in_the_same_room(self, fake_redis):
+        service, _, movie_id, showroom_id, _ = await make_service(fake_redis)
+        await service.schedule(make_screening_create(movie_id, showroom_id))
 
-    async def test_invalid_movie_or_showroom_id_rolls_back_and_raises_value_error(self):
-        service, session = make_service()
-        session.execute.side_effect = [MagicMock(), no_overlap_result()]
-        session.commit.side_effect = IntegrityError("stmt", {}, Exception("fk violation"))
+        second = await service.schedule(
+            make_screening_create(
+                movie_id,
+                showroom_id,
+                start_time=datetime(2026, 9, 1, 20, 0, tzinfo=timezone.utc),
+                end_time=datetime(2026, 9, 1, 22, 0, tzinfo=timezone.utc),
+            )
+        )
 
-        with pytest.raises(ValueError, match="movie_id or showroom_id does not exist"):
-            await service.schedule(make_screening_create())
+        assert second["showroom_id"] == str(showroom_id)
 
-        session.rollback.assert_awaited_once()
 
-    async def test_db_outage_rolls_back_and_reraises(self):
-        service, session = make_service()
-        session.execute.side_effect = OperationalError("stmt", {}, Exception("down"))
+class TestGetShowtime:
+    async def test_returns_none_when_not_found(self, fake_redis):
+        service, _, _, _, _ = await make_service(fake_redis)
 
-        with pytest.raises(OperationalError):
-            await service.schedule(make_screening_create())
+        assert await service.get_showtime(uuid4()) is None
 
-        session.rollback.assert_awaited_once()
+    async def test_returns_the_scheduled_showtime(self, fake_redis):
+        service, _, movie_id, showroom_id, _ = await make_service(fake_redis)
+        screening = await service.schedule(make_screening_create(movie_id, showroom_id))
+
+        showtime = await service.get_showtime(uuid_from(screening["showtime_id"]))
+
+        assert showtime["id"] == screening["showtime_id"]
 
 
 class TestListForDate:
-    async def test_returns_movie_showtime_showroom_rows(self):
-        service, session = make_service()
-        movie = Movie(id=uuid4(), title="Inception", description="x", poster_image_url="x.jpg")
-        showtime = Showtime(
-            id=uuid4(),
-            start_time=datetime(2026, 9, 1, 18, 0, tzinfo=timezone.utc),
-            end_time=datetime(2026, 9, 1, 20, 0, tzinfo=timezone.utc),
-            price="12.50",
-        )
-        showroom_id = uuid4()
-        session.execute.return_value = MagicMock(all=lambda: [(movie, showtime, showroom_id)])
+    async def test_returns_screenings_scheduled_that_day(self, fake_redis):
+        service, _, movie_id, showroom_id, _ = await make_service(fake_redis)
+        await service.schedule(make_screening_create(movie_id, showroom_id))
 
-        rows = await service.list_for_date(date(2026, 9, 1))
+        results = await service.list_for_date(date(2026, 9, 1))
 
-        assert rows == [(movie, showtime, showroom_id)]
+        assert len(results) == 1
+        assert results[0]["movie"]["title"] == "Inception"
 
-    async def test_db_outage_reraises(self):
-        service, session = make_service()
-        session.execute.side_effect = OperationalError("stmt", {}, Exception("down"))
+    async def test_returns_empty_for_a_date_with_nothing_scheduled(self, fake_redis):
+        service, _, _, _, _ = await make_service(fake_redis)
 
-        with pytest.raises(OperationalError):
-            await service.list_for_date(date(2026, 9, 1))
+        assert await service.list_for_date(date(2026, 9, 1)) == []
 
 
 class TestDelete:
-    async def test_returns_false_when_not_found(self):
-        service, session = make_service()
-        session.get.return_value = None
+    async def test_returns_false_when_not_found(self, fake_redis):
+        service, _, movie_id, showroom_id, _ = await make_service(fake_redis)
 
-        deleted = await service.delete(uuid4(), uuid4(), uuid4())
+        assert await service.delete(movie_id, showroom_id, uuid4()) is False
 
-        assert deleted is False
-        session.delete.assert_not_called()
-
-    async def test_deletes_the_junction_row_only(self):
-        service, session = make_service()
-        movie_id, showroom_id, showtime_id = uuid4(), uuid4(), uuid4()
-        existing = MovieShowtime(
-            movie_id=movie_id, showroom_id=showroom_id, showtime_id=showtime_id
-        )
-        session.get.return_value = existing
+    async def test_deletes_and_publishes_an_event(self, fake_redis):
+        service, producer, movie_id, showroom_id, _ = await make_service(fake_redis)
+        screening = await service.schedule(make_screening_create(movie_id, showroom_id))
+        producer.reset_mock()
+        showtime_id = uuid_from(screening["showtime_id"])
 
         deleted = await service.delete(movie_id, showroom_id, showtime_id)
 
         assert deleted is True
-        session.delete.assert_awaited_once_with(existing)
-        session.commit.assert_awaited_once()
+        producer.publish.assert_awaited_once()
 
-    async def test_active_reservations_rolls_back_and_raises_value_error(self):
-        service, session = make_service()
-        existing = MovieShowtime(movie_id=uuid4(), showroom_id=uuid4(), showtime_id=uuid4())
-        session.get.return_value = existing
-        session.commit.side_effect = IntegrityError("stmt", {}, Exception("fk violation"))
+    async def test_rejects_deleting_a_screening_with_an_active_hold(self, fake_redis):
+        service, _, movie_id, showroom_id, showroom_service = await make_service(fake_redis)
+        screening = await service.schedule(make_screening_create(movie_id, showroom_id))
+        showtime_id = uuid_from(screening["showtime_id"])
+        seats = await showroom_service.bulk_create_seats(showroom_id, ["A"], 1)
+        await service.reservation_redis_repo.acquire_seat(
+            showtime_id, uuid_from(seats[0]["id"]), uuid4()
+        )
 
-        with pytest.raises(ValueError, match="Cannot delete a screening"):
-            await service.delete(uuid4(), uuid4(), uuid4())
-
-        session.rollback.assert_awaited_once()
-
-    async def test_db_outage_rolls_back_and_reraises(self):
-        service, session = make_service()
-        existing = MovieShowtime(movie_id=uuid4(), showroom_id=uuid4(), showtime_id=uuid4())
-        session.get.return_value = existing
-        session.commit.side_effect = OperationalError("stmt", {}, Exception("down"))
-
-        with pytest.raises(OperationalError):
-            await service.delete(uuid4(), uuid4(), uuid4())
-
-        session.rollback.assert_awaited_once()
+        with pytest.raises(ValueError, match="active reservations"):
+            await service.delete(movie_id, showroom_id, showtime_id)
 
 
 class TestSeatMap:
-    async def test_raises_when_screening_not_found(self):
-        service, session = make_service()
-        session.get.return_value = None
+    async def test_raises_when_screening_not_found(self, fake_redis):
+        service, _, movie_id, showroom_id, _ = await make_service(fake_redis)
 
         with pytest.raises(ScreeningNotFoundError):
-            await service.seat_map(uuid4(), uuid4(), uuid4())
+            await service.seat_map(movie_id, showroom_id, uuid4())
 
-    async def test_marks_seats_available_held_and_booked(self):
-        service, session = make_service()
-        session.get.return_value = object()  # the MovieShowtime row
-        seat_available = ShowroomSeat(id=uuid4(), showroom_id=uuid4(), row="A", number=1)
-        seat_held = ShowroomSeat(id=uuid4(), showroom_id=uuid4(), row="A", number=2)
-        seat_booked = ShowroomSeat(id=uuid4(), showroom_id=uuid4(), row="A", number=3)
-        session.execute.side_effect = [
-            MagicMock(
-                scalars=lambda: MagicMock(
-                    all=lambda: [seat_available, seat_held, seat_booked]
-                )
-            ),
-            MagicMock(
-                all=lambda: [
-                    (seat_held.id, ReservationStatus.PENDING),
-                    (seat_booked.id, ReservationStatus.CONFIRMED),
-                ]
-            ),
-        ]
+    async def test_marks_seats_available_held_and_booked(self, fake_redis):
+        service, _, movie_id, showroom_id, showroom_service = await make_service(fake_redis)
+        screening = await service.schedule(make_screening_create(movie_id, showroom_id))
+        showtime_id = uuid_from(screening["showtime_id"])
+        seats = await showroom_service.bulk_create_seats(showroom_id, ["A"], 3)
+        held_seat_id = uuid_from(seats[0]["id"])
+        booked_seat_id = uuid_from(seats[1]["id"])
 
-        seat_map = await service.seat_map(uuid4(), uuid4(), uuid4())
+        held_reservation_id = uuid4()
+        await service.reservation_redis_repo.acquire_seat(
+            showtime_id, held_seat_id, held_reservation_id
+        )
+        await service.reservation_redis_repo.save(
+            {
+                "id": str(held_reservation_id),
+                "status": "pending",
+                "user_id": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
-        by_id = {seat["id"]: seat["status"] for seat in seat_map}
-        assert by_id[str(seat_available.id)] == "available"
-        assert by_id[str(seat_held.id)] == "held"
-        assert by_id[str(seat_booked.id)] == "booked"
+        booked_reservation_id = uuid4()
+        await service.reservation_redis_repo.acquire_seat(
+            showtime_id, booked_seat_id, booked_reservation_id
+        )
+        await service.reservation_redis_repo.save(
+            {
+                "id": str(booked_reservation_id),
+                "status": "confirmed",
+                "user_id": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
-    async def test_db_outage_reraises(self):
-        service, session = make_service()
-        session.get.side_effect = OperationalError("stmt", {}, Exception("down"))
+        seat_map = await service.seat_map(movie_id, showroom_id, showtime_id)
 
-        with pytest.raises(OperationalError):
-            await service.seat_map(uuid4(), uuid4(), uuid4())
+        status_by_seat = {seat["id"]: seat["status"] for seat in seat_map}
+        assert status_by_seat[seats[0]["id"]] == "held"
+        assert status_by_seat[seats[1]["id"]] == "booked"
+        assert status_by_seat[seats[2]["id"]] == "available"

@@ -64,3 +64,11 @@ class ReservationRedisRepository:
 
     async def get_seat_holder(self, showtime_id: UUID, seat_id: UUID) -> str | None:
         return await redis_client.get(_seat_lock_key(showtime_id, seat_id))
+
+    async def has_any_active_seat(self, showtime_id: UUID) -> bool:
+        """Whether any seat for this screening currently has a hold or
+        booking against it — used to refuse unscheduling a screening
+        that's still in use."""
+        async for _ in redis_client.scan_iter(match=f"{_SEAT_LOCK_PREFIX}{showtime_id}:*"):
+            return True
+        return False

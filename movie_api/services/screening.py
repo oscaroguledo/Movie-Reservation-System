@@ -4,7 +4,6 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from core.db.postgresql import async_session_factory
-from core.db.redis import redis_client
 from core.events import TOPIC, Event, EventType
 from core.kafka import KafkaProducer
 from repository.reservation.redis import ReservationRedisRepository
@@ -171,7 +170,7 @@ class ScreeningService:
 
         # Best-effort guard: refuse to unschedule a screening that still
         # has an active seat hold/booking against it.
-        async for _ in redis_client.scan_iter(match=f"screening_seat:{showtime_id}:*", count=50):
+        if await self.reservation_redis_repo.has_any_active_seat(showtime_id):
             raise ValueError("Cannot delete a screening with active reservations")
 
         await self.redis_repo.unmark_screening(movie_id, showroom_id, showtime_id)

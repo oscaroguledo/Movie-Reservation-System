@@ -5,33 +5,28 @@ from uuid import uuid4
 from core.auth import Principal, get_current_principal, require_authenticated
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from models import Reservation, ReservationStatus, ReservationUserType
+from models import ReservationUserType
 from routes.reservation import get_reservation_service, router
 from services.reservation import NotAuthorizedError, SeatUnavailableError
-from sqlalchemy.exc import OperationalError
 
 
 def make_reservation(**overrides):
     defaults = dict(
-        id=uuid4(),
-        user_id=uuid4(),
-        user_type=ReservationUserType.REGULAR,
-        movie_id=uuid4(),
-        showroom_id=uuid4(),
-        showtime_id=uuid4(),
-        showroom_seat_id=uuid4(),
-        status=ReservationStatus.PENDING,
-        expires_at=datetime.now(timezone.utc) + timedelta(seconds=30),
+        id=str(uuid4()),
+        user_id=str(uuid4()),
+        user_type="regular",
+        movie_id=str(uuid4()),
+        showroom_id=str(uuid4()),
+        showtime_id=str(uuid4()),
+        showroom_seat_id=str(uuid4()),
+        status="pending",
+        expires_at=(datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat(),
     )
     defaults.update(overrides)
-    return Reservation(**defaults)
+    return defaults
 
 
-def make_client(
-    service: AsyncMock,
-    *,
-    principal: Principal | None = None,
-) -> TestClient:
+def make_client(service: AsyncMock, *, principal: Principal | None = None) -> TestClient:
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_reservation_service] = lambda: service
@@ -63,16 +58,6 @@ class TestCreateReservation:
         assert response.status_code == 201
         assert len(response.json()["data"]) == 1
 
-    def test_authenticated_user_can_hold_a_seat(self):
-        service = AsyncMock()
-        principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
-        service.create_hold.return_value = [make_reservation(user_id=principal.user_id)]
-        client = make_client(service, principal=principal)
-
-        response = client.post("/reservations", json=make_reservation_payload())
-
-        assert response.status_code == 201
-
     def test_seat_unavailable_returns_409(self):
         service = AsyncMock()
         service.create_hold.side_effect = SeatUnavailableError("taken")
@@ -82,24 +67,15 @@ class TestCreateReservation:
 
         assert response.status_code == 409
 
-    def test_db_outage_returns_503(self):
-        service = AsyncMock()
-        service.create_hold.side_effect = OperationalError("stmt", {}, Exception("down"))
-        client = make_client(service)
-
-        response = client.post("/reservations", json=make_reservation_payload())
-
-        assert response.status_code == 503
-
 
 class TestConfirmReservation:
     def test_confirms_a_reservation(self):
         service = AsyncMock()
-        reservation = make_reservation(status=ReservationStatus.CONFIRMED)
+        reservation = make_reservation(status="confirmed")
         service.confirm.return_value = reservation
         client = make_client(service)
 
-        response = client.post(f"/reservations/{reservation.id}/confirm")
+        response = client.post(f"/reservations/{reservation['id']}/confirm")
 
         assert response.status_code == 200
         assert response.json()["data"]["status"] == "confirmed"
@@ -122,21 +98,12 @@ class TestConfirmReservation:
 
         assert response.status_code == 409
 
-    def test_db_outage_returns_503(self):
-        service = AsyncMock()
-        service.confirm.side_effect = OperationalError("stmt", {}, Exception("down"))
-        client = make_client(service)
-
-        response = client.post(f"/reservations/{uuid4()}/confirm")
-
-        assert response.status_code == 503
-
 
 class TestListMyReservations:
     def test_returns_the_principals_reservations(self):
         service = AsyncMock()
         principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
-        service.list_for_principal.return_value = [make_reservation(user_id=principal.user_id)]
+        service.list_for_principal.return_value = [make_reservation(user_id=str(principal.user_id))]
         client = make_client(service, principal=principal)
 
         response = client.get("/reservations")
@@ -153,28 +120,16 @@ class TestListMyReservations:
         assert response.status_code == 401
         service.list_for_principal.assert_not_called()
 
-    def test_db_outage_returns_503(self):
-        service = AsyncMock()
-        principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
-        service.list_for_principal.side_effect = OperationalError("stmt", {}, Exception("down"))
-        client = make_client(service, principal=principal)
-
-        response = client.get("/reservations")
-
-        assert response.status_code == 503
-
 
 class TestCancelReservation:
     def test_owner_can_cancel(self):
         service = AsyncMock()
         principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
-        reservation = make_reservation(
-            user_id=principal.user_id, status=ReservationStatus.CANCELLED
-        )
+        reservation = make_reservation(user_id=str(principal.user_id), status="cancelled")
         service.cancel.return_value = reservation
         client = make_client(service, principal=principal)
 
-        response = client.patch(f"/reservations/{reservation.id}/cancel")
+        response = client.patch(f"/reservations/{reservation['id']}/cancel")
 
         assert response.status_code == 200
         assert response.json()["data"]["status"] == "cancelled"
@@ -219,22 +174,3 @@ class TestCancelReservation:
         response = client.patch(f"/reservations/{uuid4()}/cancel")
 
         assert response.status_code == 409
-
-    def test_db_outage_returns_503(self):
-        service = AsyncMock()
-        principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
-        service.cancel.side_effect = OperationalError("stmt", {}, Exception("down"))
-        client = make_client(service, principal=principal)
-
-        response = client.patch(f"/reservations/{uuid4()}/cancel")
-
-        assert response.status_code == 503
-
-
-class TestGetReservationService:
-    def test_builds_a_service_from_its_session_dependency(self):
-        session = AsyncMock()
-
-        service = get_reservation_service(session=session)
-
-        assert service.session is session
