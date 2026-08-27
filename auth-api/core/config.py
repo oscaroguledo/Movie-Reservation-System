@@ -12,13 +12,14 @@ class Settings(BaseSettings):
     service_name: str = "auth-api"
     log_level: str = "INFO"
     auth_api_port: int = 8000
+    # Comma-separated allowed origins for browser clients; "*" allows any.
+    cors_allowed_origins: str = "*"
     jwt_secret_key: str = "your-secret-key-here"
     jwt_default_expiration_minutes: int = 30
     hold_ttl_seconds: int = 30
 
-    # Bootstraps the very first admin on startup when set — every
-    # admin-management endpoint otherwise requires an existing admin, which
-    # is a deadlock on a fresh system. Left unset, seeding is skipped.
+    # Bootstraps the very first admin on startup when set, since every
+    # admin-management endpoint otherwise requires an existing admin.
     initial_admin_email: str | None = None
     initial_admin_password: str | None = None
     initial_admin_first_name: str = "Admin"

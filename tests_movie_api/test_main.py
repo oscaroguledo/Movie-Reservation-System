@@ -12,6 +12,16 @@ def test_app_is_fastapi_instance_with_expected_title():
     assert app.title == "Movie API"
 
 
+def test_cors_allows_the_configured_origins():
+    from main import app
+
+    client = TestClient(app)
+
+    response = client.get("/openapi.json", headers={"Origin": "https://example.com"})
+
+    assert response.headers["access-control-allow-origin"] == "*"
+
+
 def test_health_router_is_mounted():
     from main import app
 

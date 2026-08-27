@@ -7,6 +7,7 @@ def test_default_values_ignore_any_real_env_file():
     assert settings.service_name == "movie-api"
     assert settings.log_level == "INFO"
     assert settings.movie_api_port == 8001
+    assert settings.cors_allowed_origins == "*"
     assert settings.hold_ttl_seconds == 30
     assert settings.entity_cache_ttl_seconds == 3600
     assert settings.postgres_url.startswith("postgresql+asyncpg://")

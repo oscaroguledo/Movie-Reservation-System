@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     service_name: str = "movie-api"
     log_level: str = "INFO"
     movie_api_port: int = 8001
+    # Comma-separated allowed origins for browser clients; "*" allows any.
+    cors_allowed_origins: str = "*"
     jwt_secret_key: str = "your-secret-key-here"
     hold_ttl_seconds: int = 30
     # How long a cached entity stays valid before falling back to Postgres.

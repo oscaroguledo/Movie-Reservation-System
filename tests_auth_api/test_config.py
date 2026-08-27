@@ -7,6 +7,7 @@ def test_settings_defaults():
     assert settings.service_name == "auth-api"
     assert settings.log_level == "INFO"
     assert settings.auth_api_port == 8000
+    assert settings.cors_allowed_origins == "*"
     assert settings.jwt_default_expiration_minutes == 30
     assert settings.kafka_bootstrap_servers == "localhost:9092"
     assert settings.kafka_client_id == "auth-api"

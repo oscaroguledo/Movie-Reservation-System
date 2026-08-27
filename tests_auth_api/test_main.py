@@ -15,6 +15,14 @@ def test_app_boots_and_exposes_openapi_schema():
     assert response.json()["info"]["title"] == "Auth API"
 
 
+def test_cors_allows_the_configured_origins():
+    client = TestClient(app)
+
+    response = client.get("/openapi.json", headers={"Origin": "https://example.com"})
+
+    assert response.headers["access-control-allow-origin"] == "*"
+
+
 def test_health_and_user_routers_are_mounted():
     client = TestClient(app)
     app.dependency_overrides[get_session] = lambda: AsyncMock()

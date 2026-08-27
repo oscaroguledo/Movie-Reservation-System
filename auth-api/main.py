@@ -6,6 +6,7 @@ from core.kafka import KafkaProducer
 from core.seed import seed_initial_admin
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
+from fastapi.middleware.cors import CORSMiddleware
 from routes.health import router as health_router
 from routes.user import router as user_router
 
@@ -29,6 +30,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Auth API", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip() for origin in _settings.cors_allowed_origins.split(",")],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(health_router)
 app.include_router(user_router)
 

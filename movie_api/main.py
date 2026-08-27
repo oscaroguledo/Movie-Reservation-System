@@ -5,6 +5,7 @@ from core.db.postgresql import init_models
 from core.kafka import KafkaProducer
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
+from fastapi.middleware.cors import CORSMiddleware
 from routes.genre import router as genre_router
 from routes.health import router as health_router
 from routes.movie import router as movie_router
@@ -29,6 +30,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Movie API", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip() for origin in _settings.cors_allowed_origins.split(",")],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(health_router)
 app.include_router(genre_router)
 app.include_router(movie_router)
