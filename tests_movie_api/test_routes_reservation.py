@@ -73,6 +73,21 @@ class TestCreateReservation:
 
         assert response.status_code == 409
 
+    def test_too_many_attempts_returns_429(self):
+        from routes.reservation import create_hold_rate_limiter
+
+        service = AsyncMock()
+        service.create_hold.return_value = [make_reservation(user_id=None)]
+        client = make_client(service)
+        limit = create_hold_rate_limiter.max_requests
+
+        for _ in range(limit):
+            assert client.post("/reservations", json=make_reservation_payload()).status_code == 201
+
+        response = client.post("/reservations", json=make_reservation_payload())
+
+        assert response.status_code == 429
+
 
 class TestConfirmReservation:
     def test_confirms_a_reservation(self):

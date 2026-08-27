@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     auth_api_port: int = 8000
     # Comma-separated allowed origins for browser clients; "*" allows any.
     cors_allowed_origins: str = "*"
+    # Brute-force guard on /login, per client IP.
+    login_rate_limit_per_minute: int = 10
     jwt_secret_key: str = "your-secret-key-here"
     jwt_default_expiration_minutes: int = 30
     hold_ttl_seconds: int = 30

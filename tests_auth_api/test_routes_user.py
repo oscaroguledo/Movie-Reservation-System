@@ -243,6 +243,20 @@ class TestLogin:
 
         assert response.status_code == 500
 
+    def test_too_many_attempts_returns_429(self):
+        from routes.user import login_rate_limiter
+
+        service = AsyncMock()
+        service.login.return_value = None
+        client = make_client(service)
+        payload = {"email": "jane@example.com", "password": VALID_PASSWORD}
+        limit = login_rate_limiter.max_requests
+
+        for _ in range(limit):
+            assert client.post("/login", json=payload).status_code == 401
+
+        assert client.post("/login", json=payload).status_code == 429
+
 
 class TestDependencyFactories:
     def test_get_kafka_producer_reads_it_from_app_state(self):

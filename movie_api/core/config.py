@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     movie_api_port: int = 8001
     # Comma-separated allowed origins for browser clients; "*" allows any.
     cors_allowed_origins: str = "*"
+    # Spam guard on seat-hold creation, per client IP.
+    reservation_rate_limit_per_minute: int = 20
     jwt_secret_key: str = "your-secret-key-here"
     hold_ttl_seconds: int = 30
     # How long a cached entity stays valid before falling back to Postgres.

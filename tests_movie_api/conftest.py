@@ -17,3 +17,14 @@ def fake_redis(monkeypatch):
     ):
         monkeypatch.setattr(f"{module}.redis_client", redis)
     return redis
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiters():
+    """Module-level singleton shared across every test in this process,
+    so each test starts with a clean hit count."""
+    from routes.reservation import create_hold_rate_limiter
+
+    create_hold_rate_limiter.reset()
+    yield
+    create_hold_rate_limiter.reset()

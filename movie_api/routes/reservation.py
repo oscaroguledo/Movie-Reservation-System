@@ -1,7 +1,9 @@
 from uuid import UUID
 
 from core.auth import Principal, get_current_principal, require_authenticated
+from core.config import get_settings
 from core.dependencies import get_reservation_service
+from core.rate_limit import RateLimiter
 from core.response import APIResponse, EResponse, SResponse
 from fastapi import APIRouter, Depends, Response
 from schemas.payment import PaymentCreate
@@ -15,6 +17,10 @@ from services.reservation import (
 
 router = APIRouter()
 
+create_hold_rate_limiter = RateLimiter(
+    max_requests=get_settings().reservation_rate_limit_per_minute, window_seconds=60
+)
+
 
 @router.post("/reservations", response_model=APIResponse[list[dict]])
 async def create_reservation(
@@ -22,6 +28,7 @@ async def create_reservation(
     response: Response,
     reservation_service: ReservationService = Depends(get_reservation_service),
     principal: Principal = Depends(get_current_principal),
+    _rate_limit: None = Depends(create_hold_rate_limiter),
 ) -> APIResponse:
     try:
         reservations = await reservation_service.create_hold(principal, payload)

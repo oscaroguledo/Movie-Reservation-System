@@ -1,8 +1,10 @@
 from uuid import UUID
 
 from core.auth import get_current_user, require_admin
+from core.config import get_settings
 from core.db.postgresql import get_session
 from core.kafka import KafkaProducer
+from core.rate_limit import RateLimiter
 from core.response import APIResponse, EResponse, SResponse
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from models.user import User
@@ -13,6 +15,10 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
+
+login_rate_limiter = RateLimiter(
+    max_requests=get_settings().login_rate_limit_per_minute, window_seconds=60
+)
 
 
 def get_user_get_query(
@@ -103,6 +109,7 @@ async def login(
     payload: UserLogin,
     response: Response,
     user_service: UserService = Depends(get_user_service),
+    _rate_limit: None = Depends(login_rate_limiter),
 ) -> APIResponse:
     try:
         token = await user_service.login(payload)
