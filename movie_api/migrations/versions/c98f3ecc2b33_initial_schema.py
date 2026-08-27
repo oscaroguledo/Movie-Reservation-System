@@ -294,3 +294,11 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_movie_api_movies_title"), table_name="movies", schema="movie_api")
     op.drop_table("movies", schema="movie_api")
     op.drop_table("genres", schema="movie_api")
+    # Postgres ENUM types are separate objects from the column that uses
+    # them — dropping the table doesn't drop the type, so a later re-upgrade
+    # would collide with these orphaned ones unless dropped explicitly.
+    sa.Enum(name="payment_status", schema="movie_api").drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name="reservation_status", schema="movie_api").drop(op.get_bind(), checkfirst=True)
+    sa.Enum(name="reservation_user_type", schema="movie_api").drop(
+        op.get_bind(), checkfirst=True
+    )

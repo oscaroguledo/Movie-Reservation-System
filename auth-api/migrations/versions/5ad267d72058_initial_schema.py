@@ -71,3 +71,7 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_auth_api_users_email"), table_name="users", schema="auth_api")
     op.drop_table("users", schema="auth_api")
     op.drop_table("revoked_tokens", schema="auth_api")
+    # Postgres ENUM types are separate objects from the column that uses
+    # them — dropping the table doesn't drop the type, so a later re-upgrade
+    # would collide with this orphaned one unless it's dropped explicitly.
+    sa.Enum(name="user_type", schema="auth_api").drop(op.get_bind(), checkfirst=True)
