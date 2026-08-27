@@ -231,7 +231,11 @@ async def handle_event(event: Event) -> bool:
     try:
         async with async_session_factory() as session:
             await handler(session, event.payload)
-    except OperationalError:
+    except (OperationalError, OSError):
+        # OSError covers a failed connection attempt itself (e.g. a bad
+        # hostname): SQLAlchemy only translates DBAPI errors raised during
+        # statement execution to OperationalError, not ones raised while
+        # the connection pool is establishing the connection.
         logger.exception(
             "Database unavailable persisting %s (%s) — leaving uncommitted for retry",
             event.event_type,

@@ -304,6 +304,15 @@ class TestHandleEvent:
         with patch("worker.async_session_factory", side_effect=error):
             assert await worker.handle_event(event) is False
 
+    async def test_connection_failure_is_not_committed(self):
+        event = Event(
+            event_type=EventType.GENRE_CREATED, payload={"id": str(uuid4()), "name": "x"}
+        )
+        error = OSError("Connect call failed")
+
+        with patch("worker.async_session_factory", side_effect=error):
+            assert await worker.handle_event(event) is False
+
     async def test_unexpected_error_is_still_committed(self):
         event = Event(event_type=EventType.GENRE_CREATED, payload={"bad": "payload"})
 
