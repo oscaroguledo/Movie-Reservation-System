@@ -11,3 +11,9 @@ Table auth_api.users {
   created_at timestamptz [not null, default: `now()`]
   updated_at timestamptz [not null, default: `now()`]
 }
+
+Table auth_api.revoked_tokens {
+  jti varchar(36) [pk, note: 'the revoked JWT\'s own jti claim']
+  expires_at timestamptz [not null, note: 'the token\'s own exp; row is moot once this passes']
+  revoked_at timestamptz [not null, default: `now()`]
+}

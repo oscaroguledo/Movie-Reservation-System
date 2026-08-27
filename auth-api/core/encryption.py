@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import jwt
 from argon2 import PasswordHasher
@@ -12,11 +13,8 @@ ph = PasswordHasher()
 class PasswordHandler:
     @staticmethod
     async def encrypt(password: str) -> str:
-        """Hashes a plain text password using Argon2id.
-
-        Argon2id is deliberately slow (tens to hundreds of ms), so this runs
-        in a worker thread instead of blocking the event loop.
-        """
+        """Hashes a password with Argon2id, in a worker thread since it's
+        deliberately slow (tens to hundreds of ms)."""
         return await asyncio.to_thread(ph.hash, password)
 
     @staticmethod
@@ -39,17 +37,15 @@ class JWTHandler:
         algorithm: str = "HS256",
         expires_delta: timedelta | None = None,
     ) -> str:
-        """
-        Encodes a payload dictionary into a JWT token string with an 'exp' claim.
-        """
+        """Encodes a payload dict into a JWT with 'exp' and 'jti' claims."""
         to_encode = payload.copy()
 
-        # Calculate expiration timestamp using UTC
         if expires_delta:
             expire = datetime.now(timezone.utc) + expires_delta
         else:
             expire = datetime.now(timezone.utc) + timedelta(minutes=self.default_expiration_minutes)
 
+        to_encode.setdefault("jti", str(uuid4()))
         to_encode.update({"exp": expire})
 
         return await asyncio.to_thread(jwt.encode, to_encode, secret_key, algorithm=algorithm)
@@ -61,9 +57,7 @@ class JWTHandler:
         algorithms: list[str] | None = None,
         verify_exp: bool = True,
     ) -> dict:
-        """
-        Decodes and validates a JWT token string.
-        """
+        """Decodes and validates a JWT token string."""
         if algorithms is None:
             algorithms = ["HS256"]
 

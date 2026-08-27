@@ -1,6 +1,7 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
-from core.auth import get_current_user, require_admin
+from core.auth import get_current_token_payload, get_current_user, require_admin
 from core.config import get_settings
 from core.db.postgresql import get_session
 from core.kafka import KafkaProducer
@@ -10,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from models.user import User
 from pydantic import EmailStr, ValidationError
 from schemas.user import UserCreate, UserGet, UserList, UserLogin, UserUpdate
+from services.token import TokenService
 from services.user import UserService, UserType
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,6 +58,10 @@ def get_user_service(
     producer: KafkaProducer = Depends(get_kafka_producer),
 ) -> UserService:
     return UserService(session, producer)
+
+
+def get_token_service(session: AsyncSession = Depends(get_session)) -> TokenService:
+    return TokenService(session)
 
 
 @router.post("/register", response_model=APIResponse[dict])
@@ -125,6 +131,24 @@ async def login(
 
     response.status_code = 200
     return SResponse(data={"token": token}, message="Login successful", status=200)
+
+
+@router.post("/logout", response_model=APIResponse[dict])
+async def logout(
+    response: Response,
+    payload: dict = Depends(get_current_token_payload),
+    token_service: TokenService = Depends(get_token_service),
+) -> APIResponse:
+    jti = payload.get("jti")
+    if jti:
+        expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        try:
+            await token_service.revoke(jti, expires_at)
+        except OperationalError:
+            response.status_code = 503
+            return EResponse(message="Database unavailable, please try again later", status=503)
+
+    return SResponse(data=None, message="Logged out")
 
 
 @router.get("/me", response_model=APIResponse[dict])

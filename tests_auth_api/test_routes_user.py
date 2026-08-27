@@ -1,13 +1,15 @@
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from core.auth import get_current_user, require_admin
+from core.auth import get_current_token_payload, get_current_user, require_admin
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from models.user import User, UserType
 from routes.user import (
     get_kafka_producer,
+    get_token_service,
     get_user_get_query,
     get_user_list_query,
     get_user_service,
@@ -258,6 +260,67 @@ class TestLogin:
         assert client.post("/login", json=payload).status_code == 429
 
 
+def make_payload(**overrides):
+    # Real decoded JWTs carry "exp" as a numeric epoch timestamp, not a datetime.
+    exp = (datetime.now(timezone.utc) + timedelta(minutes=5)).timestamp()
+    payload = {"sub": str(uuid4()), "jti": "a-jti", "exp": exp}
+    payload.update(overrides)
+    return payload
+
+
+def make_logout_client(payload: dict, token_service: AsyncMock) -> TestClient:
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_current_token_payload] = lambda: payload
+    app.dependency_overrides[get_token_service] = lambda: token_service
+    return TestClient(app)
+
+
+class TestLogout:
+    def test_revokes_the_current_token(self):
+        token_service = AsyncMock()
+        exp = (datetime.now(timezone.utc) + timedelta(minutes=5)).timestamp()
+        client = make_logout_client(make_payload(jti="a-jti", exp=exp), token_service)
+
+        response = client.post("/logout")
+
+        assert response.status_code == 200
+        token_service.revoke.assert_awaited_once()
+        jti_arg, expires_at_arg = token_service.revoke.await_args.args
+        assert jti_arg == "a-jti"
+        assert expires_at_arg == datetime.fromtimestamp(exp, tz=timezone.utc)
+
+    def test_token_without_a_jti_is_a_no_op(self):
+        token_service = AsyncMock()
+        client = make_logout_client(make_payload(jti=None), token_service)
+
+        response = client.post("/logout")
+
+        assert response.status_code == 200
+        token_service.revoke.assert_not_called()
+
+    def test_db_outage_returns_503(self):
+        token_service = AsyncMock()
+        token_service.revoke.side_effect = OperationalError("stmt", {}, Exception("down"))
+        client = make_logout_client(make_payload(), token_service)
+
+        response = client.post("/logout")
+
+        assert response.status_code == 503
+
+    def test_revoked_token_cannot_be_used_to_log_out_again(self):
+        client = FastAPI()
+        client.include_router(router)
+
+        def raise_revoked():
+            raise HTTPException(status_code=401, detail="Token has been revoked")
+
+        client.dependency_overrides[get_current_token_payload] = raise_revoked
+        response = TestClient(client).post("/logout")
+
+        assert response.status_code == 401
+
+
 class TestDependencyFactories:
     def test_get_kafka_producer_reads_it_from_app_state(self):
         from types import SimpleNamespace
@@ -277,6 +340,13 @@ class TestDependencyFactories:
 
         assert service.session is session
         assert service.producer is producer
+
+    def test_get_token_service_builds_a_service_from_its_session(self):
+        session = AsyncMock()
+
+        service = get_token_service(session=session)
+
+        assert service.session is session
 
 
 class TestGetUserGetQuery:

@@ -6,6 +6,7 @@ from core.encryption import JWTHandler
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from models.user import User, UserType
+from services.token import TokenService
 from sqlalchemy.ext.asyncio import AsyncSession
 
 settings = get_settings()
@@ -13,16 +14,12 @@ jwt_handler = JWTHandler(default_expiration_minutes=settings.jwt_default_expirat
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(
+async def get_current_token_payload(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     session: AsyncSession = Depends(get_session),
-) -> User:
-    """Validates the bearer token, then re-fetches the user from the DB.
-
-    The JWT alone can go stale (role changes, deletions) for as long as it
-    remains valid, so every request re-checks current DB state rather than
-    trusting the token's claims.
-    """
+) -> dict:
+    """Decodes the bearer token and rejects it if it's been logged out —
+    shared by get_current_user and /logout, so each request decodes once."""
     if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
@@ -31,6 +28,21 @@ async def get_current_user(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
+    jti = payload.get("jti")
+    if jti and await TokenService(session).is_revoked(jti):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked"
+        )
+
+    return payload
+
+
+async def get_current_user(
+    payload: dict = Depends(get_current_token_payload),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """Re-fetches the user from the DB on every request — the JWT alone
+    can go stale (role changes, deletions) for as long as it remains valid."""
     try:
         user_id = UUID(payload.get("sub"))
     except (TypeError, ValueError) as exc:
