@@ -1,6 +1,16 @@
 # Movie Reservation System
 
 [![CI](https://github.com/oscaroguledo/Movie-Reservation-System/actions/workflows/ci.yml/badge.svg)](https://github.com/oscaroguledo/Movie-Reservation-System/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
+![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-2.0-D71F00)
+![Alembic](https://img.shields.io/badge/Alembic-migrations-6BA81E)
+![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)
+![Kafka](https://img.shields.io/badge/Apache%20Kafka-3.8-231F20?logo=apachekafka&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+![pytest](https://img.shields.io/badge/pytest-tested-0A9EDC?logo=pytest&logoColor=white)
+![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)
 
 A backend system for browsing movies, scheduling screenings, and booking seats — built as two independently deployable services connected by an event-driven pipeline, with Postgres as the durable store, Redis as the fast path, and Kafka as the backbone between them.
 
@@ -45,18 +55,23 @@ See [Design diagrams](#design-diagrams) for the full entity-relationship and res
 
 ## Tech stack
 
-| Layer | Choice |
-|---|---|
-| API framework | FastAPI (async) |
-| Durable storage | PostgreSQL, via SQLAlchemy 2.0 (async) |
-| Migrations | Alembic |
-| Cache / fast path | Redis |
-| Event bus | Kafka (`aiokafka`) |
-| Auth | JWT (`PyJWT`), Argon2id password hashing |
-| Testing | pytest, pytest-asyncio, pytest-cov |
-| Linting | ruff |
-| Containerization | Docker Compose |
-| CI | GitHub Actions |
+| Layer | Tool | Version | Role |
+|---|---|---|---|
+| Language | Python | 3.10+ | Both services target 3.10; verified on 3.12 and 3.14 too |
+| API framework | [FastAPI](https://fastapi.tiangolo.com/) | 0.141 | Async HTTP layer, request validation, OpenAPI docs |
+| ASGI server | [Uvicorn](https://www.uvicorn.org/) | 0.52 | Runs the FastAPI apps |
+| Validation | [Pydantic](https://docs.pydantic.dev/) | 2.13 | Request/response schemas, settings |
+| Durable storage | [PostgreSQL](https://www.postgresql.org/) | 16 | Source of truth for both services |
+| ORM | [SQLAlchemy](https://www.sqlalchemy.org/) | 2.0 (async) | Models, async session, query layer |
+| Migrations | [Alembic](https://alembic.sqlalchemy.org/) | 1.19 | Owns both services' schemas — see [Database migrations](#database-migrations) |
+| Postgres driver | [asyncpg](https://github.com/MagicStack/asyncpg) | 0.31 | Async DBAPI for SQLAlchemy |
+| Cache / fast path | [Redis](https://redis.io/) | 7 | Cache-aside reads, seat-hold locks, rate-limit state |
+| Event bus | [Apache Kafka](https://kafka.apache.org/) | 3.8, via `aiokafka` | Durable write pipeline from API → worker → Postgres |
+| Auth | [PyJWT](https://pyjwt.readthedocs.io/) + [Argon2id](https://github.com/hynek/argon2-cffi) | 2.13 / 25.1 | Token issuing/verification, password hashing |
+| Testing | pytest, pytest-asyncio, pytest-cov | 9.1 | Unit/integration tests, ≥90% coverage gate |
+| Linting | [Ruff](https://docs.astral.sh/ruff/) | 0.16 | Formatting-adjacent linting, import sorting |
+| Containerization | Docker Compose | — | Full local stack: both services, Postgres, Redis, Kafka |
+| CI | GitHub Actions | — | Lint, tests, and migration-drift checks on every push |
 
 ## Features
 
