@@ -10,6 +10,7 @@ settings = get_settings()
 _ITEM_PREFIX = "reservation:"
 _SEAT_LOCK_PREFIX = "screening_seat:"
 _USER_INDEX_PREFIX = "reservations:by_user:"
+_HISTORY_PREFIX = "screening_reservation_history:"
 
 
 def _seat_lock_key(showtime_id: UUID, seat_id: UUID) -> str:
@@ -67,3 +68,13 @@ class ReservationRedisRepository:
         async for _ in redis_client.scan_iter(match=f"{_SEAT_LOCK_PREFIX}{showtime_id}:*"):
             return True
         return False
+
+    async def mark_reservation_history(self, showtime_id: UUID) -> None:
+        """Permanent marker, set the moment a hold is created and never
+        cleared — unlike the seat lock, survives cancel/expire so a
+        screening delete can refuse it without waiting on worker.py to
+        durably persist the reservation to Postgres first."""
+        await redis_client.set(f"{_HISTORY_PREFIX}{showtime_id}", "1")
+
+    async def has_reservation_history(self, showtime_id: UUID) -> bool:
+        return bool(await redis_client.get(f"{_HISTORY_PREFIX}{showtime_id}"))

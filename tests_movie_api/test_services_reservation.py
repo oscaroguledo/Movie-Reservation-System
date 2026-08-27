@@ -146,6 +146,14 @@ class TestCreateHold:
         with pytest.raises(SeatUnavailableError):
             await ctx["service"].create_hold(principal, make_reservation_create(ctx))
 
+    async def test_marks_reservation_history_for_the_screening(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
+
+        await ctx["service"].create_hold(principal, make_reservation_create(ctx))
+
+        assert await ctx["service"].redis_repo.has_reservation_history(ctx["showtime_id"])
+
 
 class TestGetForPrincipal:
     async def test_returns_none_when_not_found(self, fake_redis):

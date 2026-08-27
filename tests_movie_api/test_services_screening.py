@@ -203,7 +203,26 @@ class TestDelete:
         with pytest.raises(ValueError, match="active reservations"):
             await service.delete(movie_id, showroom_id, showtime_id)
 
-    async def test_rejects_deleting_a_screening_with_reservation_history(self, fake_redis):
+    async def test_rejects_deleting_a_screening_not_yet_durably_persisted(self, fake_redis):
+        """The Redis history marker is set synchronously at hold-creation,
+        so it blocks deletion even before worker.py has written the
+        reservation to Postgres — closing the race the Postgres-only
+        check alone would miss."""
+        service, _, movie_id, showroom_id, showroom_service = await make_service(fake_redis)
+        screening = await service.schedule(make_screening_create(movie_id, showroom_id))
+        showtime_id = uuid_from(screening["showtime_id"])
+        seats = await showroom_service.bulk_create_seats(showroom_id, ["A"], 1)
+        seat_id = uuid_from(seats[0]["id"])
+        await service.reservation_redis_repo.acquire_seat(showtime_id, seat_id, uuid4())
+        await service.reservation_redis_repo.mark_reservation_history(showtime_id)
+        await service.reservation_redis_repo.release_seat(showtime_id, seat_id)
+
+        with pytest.raises(ValueError, match="reservation history"):
+            await service.delete(movie_id, showroom_id, showtime_id)
+
+    async def test_rejects_deleting_a_screening_with_reservation_history_in_postgres(
+        self, fake_redis
+    ):
         service, _, movie_id, showroom_id, _ = await make_service(fake_redis)
         screening = await service.schedule(make_screening_create(movie_id, showroom_id))
         showtime_id = uuid_from(screening["showtime_id"])

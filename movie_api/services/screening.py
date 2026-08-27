@@ -177,6 +177,13 @@ class ScreeningService:
         if await self.reservation_redis_repo.has_any_active_seat(showtime_id):
             raise ValueError("Cannot delete a screening with active reservations")
 
+        # Redis's history marker is set synchronously at hold-creation and
+        # never cleared, so it catches a just-cancelled reservation before
+        # worker.py has durably persisted it. The Postgres check is a
+        # fallback for the (unlikely) case Redis itself lost that marker.
+        if await self.reservation_redis_repo.has_reservation_history(showtime_id):
+            raise ValueError("Cannot delete a screening with reservation history")
+
         if await ReservationPostgresRepository(self.session).exists_for_screening(
             movie_id, showroom_id, showtime_id
         ):

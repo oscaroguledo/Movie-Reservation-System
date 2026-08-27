@@ -81,6 +81,8 @@ class ReservationService:
                 raise SeatUnavailableError("One or more selected seats are no longer available")
             acquired.append(seat_id)
 
+        await self.redis_repo.mark_reservation_history(showtime_id)
+
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=settings.hold_ttl_seconds)
 
