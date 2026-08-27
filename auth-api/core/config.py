@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "your-secret-key-here"
     jwt_default_expiration_minutes: int = 30
     hold_ttl_seconds: int = 30
+    # How often to delete revoked_tokens rows whose own token has expired.
+    revoked_token_cleanup_interval_seconds: int = 3600
 
     # Bootstraps the very first admin on startup when set, since every
     # admin-management endpoint otherwise requires an existing admin.

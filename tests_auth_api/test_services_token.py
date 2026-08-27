@@ -49,3 +49,20 @@ class TestIsRevoked:
         session.get.return_value = MagicMock()
 
         assert await service.is_revoked("a-jti") is True
+
+
+class TestPurgeExpired:
+    async def test_deletes_and_commits_returning_the_row_count(self):
+        service, session = make_service()
+        session.execute.return_value = MagicMock(rowcount=3)
+
+        deleted = await service.purge_expired(datetime.now(timezone.utc))
+
+        assert deleted == 3
+        session.commit.assert_awaited_once()
+
+    async def test_returns_zero_when_nothing_to_purge(self):
+        service, session = make_service()
+        session.execute.return_value = MagicMock(rowcount=0)
+
+        assert await service.purge_expired(datetime.now(timezone.utc)) == 0

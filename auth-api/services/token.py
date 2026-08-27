@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 
 from models.revoked_token import RevokedToken
+from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,3 +29,12 @@ class TokenService:
 
     async def is_revoked(self, jti: str) -> bool:
         return await self.session.get(RevokedToken, jti) is not None
+
+    async def purge_expired(self, now: datetime) -> int:
+        """Deletes rows whose own token has already expired — a revoked
+        token past its exp is rejected on that basis alone regardless."""
+        result = await self.session.execute(
+            delete(RevokedToken).where(RevokedToken.expires_at < now)
+        )
+        await self.session.commit()
+        return result.rowcount

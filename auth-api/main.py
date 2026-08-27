@@ -1,5 +1,7 @@
+import asyncio
 import logging
 
+from core.cleanup import purge_expired_revoked_tokens_periodically
 from core.config import get_settings
 from core.db.postgresql import init_models
 from core.kafka import KafkaProducer
@@ -23,9 +25,13 @@ async def lifespan(app: FastAPI):
     producer = KafkaProducer()
     await producer.start()
     app.state.kafka_producer = producer
+    cleanup_task = asyncio.create_task(
+        purge_expired_revoked_tokens_periodically(_settings.revoked_token_cleanup_interval_seconds)
+    )
     try:
         yield
     finally:
+        cleanup_task.cancel()
         await producer.stop()
 
 
