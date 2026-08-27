@@ -3,6 +3,7 @@ from datetime import datetime
 from uuid import UUID
 
 from models import Reservation, ReservationStatus, ReservationUserType
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +19,24 @@ class ReservationPostgresRepository:
 
     async def get(self, reservation_id: UUID) -> Reservation | None:
         return await self.session.get(Reservation, reservation_id)
+
+    async def exists_for_screening(
+        self, movie_id: UUID, showroom_id: UUID, showtime_id: UUID
+    ) -> bool:
+        """True if any reservation — even a cancelled or expired one —
+        still references this screening. Deleting the screening would
+        otherwise hit an uncaught FK violation in worker.py, since a
+        reservation's history is kept, never hard-deleted."""
+        result = await self.session.execute(
+            select(Reservation.id)
+            .where(
+                Reservation.movie_id == movie_id,
+                Reservation.showroom_id == showroom_id,
+                Reservation.showtime_id == showtime_id,
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
     async def create(
         self,

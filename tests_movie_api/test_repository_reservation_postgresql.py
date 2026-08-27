@@ -117,3 +117,17 @@ class TestUpdateStatus:
 
         with pytest.raises(OperationalError):
             await repo.update_status(uuid4(), ReservationStatus.CONFIRMED, None)
+
+
+class TestExistsForScreening:
+    async def test_true_when_a_reservation_still_references_the_screening(self, fake_redis):
+        repo, session = make_repo()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: uuid4())
+
+        assert await repo.exists_for_screening(uuid4(), uuid4(), uuid4()) is True
+
+    async def test_false_when_no_reservation_references_the_screening(self, fake_redis):
+        repo, session = make_repo()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: None)
+
+        assert await repo.exists_for_screening(uuid4(), uuid4(), uuid4()) is False

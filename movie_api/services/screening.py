@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 from core.events import TOPIC, Event, EventType
 from core.kafka import KafkaProducer
+from repository.reservation.postgresql import ReservationPostgresRepository
 from repository.reservation.redis import ReservationRedisRepository
 from repository.screening.postgresql import ScreeningPostgresRepository
 from repository.screening.redis import ScreeningRedisRepository
@@ -175,6 +176,11 @@ class ScreeningService:
 
         if await self.reservation_redis_repo.has_any_active_seat(showtime_id):
             raise ValueError("Cannot delete a screening with active reservations")
+
+        if await ReservationPostgresRepository(self.session).exists_for_screening(
+            movie_id, showroom_id, showtime_id
+        ):
+            raise ValueError("Cannot delete a screening with reservation history")
 
         await self.redis_repo.unmark_screening(movie_id, showroom_id, showtime_id)
         await self.redis_repo.remove_from_schedule(showroom_id, showtime_id)

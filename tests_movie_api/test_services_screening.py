@@ -27,7 +27,7 @@ async def make_service(fake_redis):
     session = AsyncMock()
     session.get.return_value = None
     session.execute.return_value = MagicMock(
-        scalars=lambda: MagicMock(all=lambda: []), all=lambda: []
+        scalars=lambda: MagicMock(all=lambda: []), all=lambda: [], scalar_one_or_none=lambda: None
     )
     producer = AsyncMock()
     genre_service = GenreService(
@@ -201,6 +201,15 @@ class TestDelete:
         )
 
         with pytest.raises(ValueError, match="active reservations"):
+            await service.delete(movie_id, showroom_id, showtime_id)
+
+    async def test_rejects_deleting_a_screening_with_reservation_history(self, fake_redis):
+        service, _, movie_id, showroom_id, _ = await make_service(fake_redis)
+        screening = await service.schedule(make_screening_create(movie_id, showroom_id))
+        showtime_id = uuid_from(screening["showtime_id"])
+        service.session.execute.return_value = MagicMock(scalar_one_or_none=lambda: uuid4())
+
+        with pytest.raises(ValueError, match="reservation history"):
             await service.delete(movie_id, showroom_id, showtime_id)
 
 
