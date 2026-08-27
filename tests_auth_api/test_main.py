@@ -50,7 +50,6 @@ def mock_kafka_producer():
 
 def test_lifespan_starts_and_stops_the_kafka_producer(mock_kafka_producer):
     with (
-        patch("main.init_models", new_callable=AsyncMock),
         patch("main.seed_initial_admin", new_callable=AsyncMock),
         TestClient(app) as client,
     ):
@@ -61,11 +60,9 @@ def test_lifespan_starts_and_stops_the_kafka_producer(mock_kafka_producer):
     mock_kafka_producer.stop.assert_awaited_once()
 
 
-def test_lifespan_creates_tables_and_seeds_the_admin_before_kafka_starts(mock_kafka_producer):
+def test_lifespan_seeds_the_admin_before_kafka_starts(mock_kafka_producer):
     with (
-        patch("main.init_models", new_callable=AsyncMock) as mock_init_models,
         patch("main.seed_initial_admin", new_callable=AsyncMock) as mock_seed_admin,
         TestClient(app),
     ):
-        mock_init_models.assert_awaited_once()
         mock_seed_admin.assert_awaited_once()

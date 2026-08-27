@@ -3,7 +3,6 @@ import logging
 
 from core.cleanup import purge_expired_revoked_tokens_periodically
 from core.config import get_settings
-from core.db.postgresql import init_models
 from core.kafka import KafkaProducer
 from core.seed import seed_initial_admin
 from fastapi import FastAPI
@@ -20,7 +19,8 @@ logging.basicConfig(level=_settings.log_level)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_models()
+    # Schema is owned by Alembic migrations (see migrations/), applied by
+    # the auth-migrate service before this container starts — not here.
     await seed_initial_admin()
     producer = KafkaProducer()
     await producer.start()

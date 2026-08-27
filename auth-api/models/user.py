@@ -31,6 +31,7 @@ class User(Base):
         Enum(
             UserType,
             name="user_type",
+            schema="auth_api",
             values_callable=lambda x: [e.value for e in x],
         ),
         nullable=False,
