@@ -37,3 +37,39 @@ jobs:
           cache: pip
       - run: pip install -r ${{ matrix.service }}/requirements.txt
       - run: pytest -v -c ${{ matrix.config }}
+
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: movie_reservation
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    strategy:
+      matrix:
+        service: [auth-api, movie_api]
+    env:
+      POSTGRES_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/movie_reservation
+      JWT_SECRET_KEY: ci-test-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -r ${{ matrix.service }}/requirements.txt
+      - name: Apply migrations to a fresh database
+        working-directory: ${{ matrix.service }}
+        run: alembic upgrade head
+      - name: Fail if the models have drifted from the latest migration
+        working-directory: ${{ matrix.service }}
+        run: alembic check
