@@ -52,6 +52,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       AUTH_API_PORT: 8000
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-*}
+      LOGIN_RATE_LIMIT_PER_MINUTE: ${LOGIN_RATE_LIMIT_PER_MINUTE:-10}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_DEFAULT_EXPIRATION_MINUTES: ${JWT_DEFAULT_EXPIRATION_MINUTES:-30}
       POSTGRES_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
@@ -87,6 +88,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       MOVIE_API_PORT: 8001
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-*}
+      RESERVATION_RATE_LIMIT_PER_MINUTE: ${RESERVATION_RATE_LIMIT_PER_MINUTE:-20}
       # Same value as auth-api's — movie-api verifies the JWTs auth-api
       # issues, so both services must share one secret.
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
