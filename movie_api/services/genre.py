@@ -80,6 +80,9 @@ class GenreService:
         if existing is None:
             return False
 
+        if await GenrePostgresRepository(self.session).is_referenced(genre_id):
+            raise ValueError("Genre is still assigned to one or more movies")
+
         await self.redis_repo.release_name(existing["name"])
         await self.redis_repo.delete(genre_id)
         await self.producer.publish(

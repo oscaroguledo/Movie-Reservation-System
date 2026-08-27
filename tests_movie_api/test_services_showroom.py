@@ -11,7 +11,7 @@ def make_service():
     session = AsyncMock()
     session.get.return_value = None
     session.execute.return_value = MagicMock(
-        scalars=lambda: MagicMock(all=lambda: []), all=lambda: []
+        scalars=lambda: MagicMock(all=lambda: []), all=lambda: [], scalar_one_or_none=lambda: None
     )
     producer = AsyncMock()
     service = ShowroomService(
@@ -100,6 +100,14 @@ class TestDelete:
         assert deleted is True
         assert await service.get(uuid_from(showroom["id"])) is None
         producer.publish.assert_awaited_once()
+
+    async def test_raises_when_still_used_by_a_screening(self, fake_redis):
+        service, _ = make_service()
+        showroom = await service.create(ShowroomCreate(name="Room 1", capacity=120))
+        service.session.execute.return_value = MagicMock(scalar_one_or_none=lambda: uuid4())
+
+        with pytest.raises(ValueError, match="still used"):
+            await service.delete(uuid_from(showroom["id"]))
 
 
 class TestBulkCreateSeats:

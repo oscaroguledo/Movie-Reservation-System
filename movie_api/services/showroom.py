@@ -153,6 +153,9 @@ class ShowroomService:
         if existing is None:
             return False
 
+        if await ShowroomPostgresRepository(self.session).is_referenced(showroom_id):
+            raise ValueError("Showroom is still used by one or more screenings")
+
         await self.redis_repo.release_name(existing["name"])
         await self.redis_repo.delete(showroom_id)
         await self.producer.publish(

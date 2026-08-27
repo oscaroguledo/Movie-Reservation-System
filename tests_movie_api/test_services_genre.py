@@ -11,7 +11,7 @@ def make_service():
     session = AsyncMock()
     session.get.return_value = None
     session.execute.return_value = MagicMock(
-        scalars=lambda: MagicMock(all=lambda: []), all=lambda: []
+        scalars=lambda: MagicMock(all=lambda: []), all=lambda: [], scalar_one_or_none=lambda: None
     )
     producer = AsyncMock()
     service = GenreService(session=session, redis_repo=GenreRedisRepository(), producer=producer)
@@ -100,6 +100,14 @@ class TestDelete:
         service, _ = make_service()
 
         assert await service.delete(uuid4()) is False
+
+    async def test_raises_when_still_assigned_to_a_movie(self, fake_redis):
+        service, _ = make_service()
+        genre = await service.create(GenreCreate(name="Action"))
+        service.session.execute.return_value = MagicMock(scalar_one_or_none=lambda: uuid4())
+
+        with pytest.raises(ValueError, match="still assigned"):
+            await service.delete(uuid_from(genre["id"]))
 
     async def test_frees_the_name_for_reuse(self, fake_redis):
         service, _ = make_service()

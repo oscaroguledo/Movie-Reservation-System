@@ -14,7 +14,7 @@ def make_service(producer=None):
     session = AsyncMock()
     session.get.return_value = None
     session.execute.return_value = MagicMock(
-        scalars=lambda: MagicMock(all=lambda: []), all=lambda: []
+        scalars=lambda: MagicMock(all=lambda: []), all=lambda: [], scalar_one_or_none=lambda: None
     )
     producer = producer or AsyncMock()
     genre_service = GenreService(
@@ -154,3 +154,13 @@ class TestDelete:
         assert deleted is True
         assert await service.get(uuid_from(movie["id"])) is None
         producer.publish.assert_awaited_once()
+
+    async def test_raises_when_still_scheduled_for_a_screening(self, fake_redis):
+        service, _, producer = make_service()
+        movie = await service.create(
+            MovieCreate(title="A", description="x", poster_image_url="x.jpg")
+        )
+        service.session.execute.return_value = MagicMock(scalar_one_or_none=lambda: uuid4())
+
+        with pytest.raises(ValueError, match="still scheduled"):
+            await service.delete(uuid_from(movie["id"]))

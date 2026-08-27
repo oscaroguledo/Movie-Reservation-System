@@ -79,7 +79,11 @@ async def delete_genre(
     genre_service: GenreService = Depends(get_genre_service),
     _admin: Principal = Depends(require_admin),
 ) -> APIResponse:
-    deleted = await genre_service.delete(genre_id)
+    try:
+        deleted = await genre_service.delete(genre_id)
+    except ValueError as exc:
+        response.status_code = 409
+        return EResponse(message=str(exc), status=409)
 
     if not deleted:
         response.status_code = 404

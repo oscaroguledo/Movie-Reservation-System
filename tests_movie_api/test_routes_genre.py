@@ -156,3 +156,12 @@ class TestDeleteGenre:
         response = client.delete(f"/genres/{uuid4()}")
 
         assert response.status_code == 404
+
+    def test_returns_409_when_still_assigned_to_a_movie(self):
+        service = AsyncMock()
+        service.delete.side_effect = ValueError("Genre is still assigned to one or more movies")
+        client = make_client(service, as_admin=True)
+
+        response = client.delete(f"/genres/{uuid4()}")
+
+        assert response.status_code == 409

@@ -79,7 +79,11 @@ async def delete_showroom(
     showroom_service: ShowroomService = Depends(get_showroom_service),
     _admin: Principal = Depends(require_admin),
 ) -> APIResponse:
-    deleted = await showroom_service.delete(showroom_id)
+    try:
+        deleted = await showroom_service.delete(showroom_id)
+    except ValueError as exc:
+        response.status_code = 409
+        return EResponse(message=str(exc), status=409)
 
     if not deleted:
         response.status_code = 404

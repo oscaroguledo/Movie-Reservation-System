@@ -122,6 +122,9 @@ class MovieService:
         if existing is None:
             return False
 
+        if await MoviePostgresRepository(self.session).is_referenced(movie_id):
+            raise ValueError("Movie is still scheduled for one or more screenings")
+
         await self.redis_repo.delete(movie_id, genre_ids=existing.get("genre_ids"))
         await self.producer.publish(
             TOPIC,

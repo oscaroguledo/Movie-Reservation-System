@@ -1,7 +1,7 @@
 import logging
 from uuid import UUID
 
-from models import Genre
+from models import Genre, MovieGenre
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,6 +66,14 @@ class GenrePostgresRepository:
             raise
 
         return genre
+
+    async def is_referenced(self, genre_id: UUID) -> bool:
+        """True if any movie still has this genre assigned — deleting it
+        would otherwise hit an uncaught FK violation in worker.py."""
+        result = await self.session.execute(
+            select(MovieGenre.genre_id).where(MovieGenre.genre_id == genre_id).limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
     async def delete(self, genre_id: UUID) -> bool:
         genre = await self.session.get(Genre, genre_id)

@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from datetime import date
 from uuid import UUID
 
-from models import Movie, MovieGenre
+from models import Movie, MovieGenre, MovieShowtime
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -120,6 +120,14 @@ class MoviePostgresRepository:
             raise
 
         return movie
+
+    async def is_referenced(self, movie_id: UUID) -> bool:
+        """True if any screening still schedules this movie — deleting it
+        would otherwise hit an uncaught FK violation in worker.py."""
+        result = await self.session.execute(
+            select(MovieShowtime.movie_id).where(MovieShowtime.movie_id == movie_id).limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
     async def delete(self, movie_id: UUID) -> bool:
         movie = await self.session.get(Movie, movie_id)

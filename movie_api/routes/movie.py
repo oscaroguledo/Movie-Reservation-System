@@ -80,7 +80,11 @@ async def delete_movie(
     movie_service: MovieService = Depends(get_movie_service),
     _admin: Principal = Depends(require_admin),
 ) -> APIResponse:
-    deleted = await movie_service.delete(movie_id)
+    try:
+        deleted = await movie_service.delete(movie_id)
+    except ValueError as exc:
+        response.status_code = 409
+        return EResponse(message=str(exc), status=409)
 
     if not deleted:
         response.status_code = 404

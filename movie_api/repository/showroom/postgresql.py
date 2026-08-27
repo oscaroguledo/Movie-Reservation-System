@@ -2,7 +2,8 @@ import logging
 from collections.abc import Sequence
 from uuid import UUID
 
-from models import Showroom, ShowroomSeat
+from models import MovieShowtime, Showroom, ShowroomSeat
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -69,12 +70,25 @@ class ShowroomPostgresRepository:
 
         return showroom
 
+    async def is_referenced(self, showroom_id: UUID) -> bool:
+        """True if any screening still uses this room — its seats are
+        cascade-deleted below since they have no life outside the room."""
+        result = await self.session.execute(
+            select(MovieShowtime.showroom_id)
+            .where(MovieShowtime.showroom_id == showroom_id)
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
     async def delete(self, showroom_id: UUID) -> bool:
         showroom = await self.session.get(Showroom, showroom_id)
         if showroom is None:
             return False
 
         try:
+            await self.session.execute(
+                sa_delete(ShowroomSeat).where(ShowroomSeat.showroom_id == showroom_id)
+            )
             await self.session.delete(showroom)
             await self.session.commit()
         except IntegrityError:

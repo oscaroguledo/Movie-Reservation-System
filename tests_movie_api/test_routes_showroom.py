@@ -165,6 +165,15 @@ class TestDeleteShowroom:
 
         assert response.status_code == 404
 
+    def test_returns_409_when_still_used_by_a_screening(self):
+        service = AsyncMock()
+        service.delete.side_effect = ValueError("Showroom is still used by one or more screenings")
+        client = make_client(service, as_admin=True)
+
+        response = client.delete(f"/showrooms/{uuid4()}")
+
+        assert response.status_code == 409
+
 
 class TestCreateShowroomSeats:
     def test_admin_can_create_seats(self):

@@ -184,3 +184,14 @@ class TestDeleteMovie:
         response = client.delete(f"/movies/{uuid4()}")
 
         assert response.status_code == 404
+
+    def test_returns_409_when_still_scheduled(self):
+        service = AsyncMock()
+        service.delete.side_effect = ValueError(
+            "Movie is still scheduled for one or more screenings"
+        )
+        client = make_client(service, as_admin=True)
+
+        response = client.delete(f"/movies/{uuid4()}")
+
+        assert response.status_code == 409

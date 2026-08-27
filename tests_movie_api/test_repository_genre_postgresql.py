@@ -99,6 +99,20 @@ class TestUpdate:
             await repo.update(uuid4(), "Comedy")
 
 
+class TestIsReferenced:
+    async def test_true_when_a_movie_still_has_the_genre(self, fake_redis):
+        repo, session = make_repo()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: uuid4())
+
+        assert await repo.is_referenced(uuid4()) is True
+
+    async def test_false_when_no_movie_has_the_genre(self, fake_redis):
+        repo, session = make_repo()
+        session.execute.return_value = MagicMock(scalar_one_or_none=lambda: None)
+
+        assert await repo.is_referenced(uuid4()) is False
+
+
 class TestDelete:
     async def test_returns_false_when_not_found(self, fake_redis):
         repo, session = make_repo()
