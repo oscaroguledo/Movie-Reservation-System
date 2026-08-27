@@ -2,8 +2,16 @@ import logging
 from collections.abc import Sequence
 from uuid import UUID
 
-from models import Movie, MovieShowtime, Reservation, ReservationStatus, Showroom, Showtime
-from sqlalchemy import func, select
+from models import (
+    Movie,
+    MovieShowtime,
+    Payment,
+    PaymentStatus,
+    Reservation,
+    ReservationStatus,
+    Showroom,
+)
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,21 +85,27 @@ class ReportingService:
         }
 
     async def revenue(self) -> dict:
-        """Revenue from CONFIRMED reservations' screening price. Revisit in
-        favor of summing Payment.amount once payment integration exists."""
+        """Net revenue from actual Payment rows (succeeded minus refunded),
+        not Reservation status — the real record of money moved."""
+        net = func.coalesce(
+            func.sum(
+                case(
+                    (Payment.status == PaymentStatus.SUCCEEDED, Payment.amount),
+                    (Payment.status == PaymentStatus.REFUNDED, -Payment.amount),
+                    else_=0,
+                )
+            ),
+            0,
+        )
+        paid_or_refunded = Payment.status.in_((PaymentStatus.SUCCEEDED, PaymentStatus.REFUNDED))
         try:
-            total_result = await self.session.execute(
-                select(func.coalesce(func.sum(Showtime.price), 0))
-                .select_from(Reservation)
-                .join(Showtime, Showtime.id == Reservation.showtime_id)
-                .where(Reservation.status == ReservationStatus.CONFIRMED)
-            )
+            total_result = await self.session.execute(select(net).where(paid_or_refunded))
             by_movie_result = await self.session.execute(
-                select(Movie.id, Movie.title, func.coalesce(func.sum(Showtime.price), 0))
-                .select_from(Reservation)
-                .join(Showtime, Showtime.id == Reservation.showtime_id)
+                select(Movie.id, Movie.title, net)
+                .select_from(Payment)
+                .join(Reservation, Reservation.id == Payment.reservation_id)
                 .join(Movie, Movie.id == Reservation.movie_id)
-                .where(Reservation.status == ReservationStatus.CONFIRMED)
+                .where(paid_or_refunded)
                 .group_by(Movie.id, Movie.title)
             )
         except OperationalError:
