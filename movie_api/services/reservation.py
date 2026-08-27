@@ -57,6 +57,14 @@ class ReservationService:
         is_admin = principal.type == ReservationUserType.ADMIN
         return is_owner or is_admin
 
+    @staticmethod
+    def can_confirm(principal: Principal, reservation: dict[str, Any]) -> bool:
+        """A guest hold has no identity to check against — the id itself is
+        its only credential. A user-owned hold is locked to that user/admin."""
+        if reservation.get("user_id") is None:
+            return True
+        return ReservationService.is_authorized(principal, reservation)
+
     async def create_hold(
         self, principal: Principal, reservation_create: ReservationCreate
     ) -> list[dict[str, Any]]:
@@ -134,11 +142,14 @@ class ReservationService:
         return await self._get_and_maybe_expire(reservation_id)
 
     async def confirm(
-        self, reservation_id: UUID, payment_create: PaymentCreate
+        self, principal: Principal, reservation_id: UUID, payment_create: PaymentCreate
     ) -> dict[str, Any] | None:
         reservation = await self._get_and_maybe_expire(reservation_id)
         if reservation is None:
             return None
+
+        if not self.can_confirm(principal, reservation):
+            raise NotAuthorizedError("Not authorized to confirm this reservation")
 
         if reservation["status"] == ReservationStatus.EXPIRED.value:
             raise ValueError("This hold has expired")

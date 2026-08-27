@@ -150,8 +150,11 @@ class TestCreateHold:
 class TestConfirm:
     async def test_returns_none_when_not_found(self, fake_redis):
         ctx = await make_service(fake_redis)
+        principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
 
-        assert await ctx["service"].confirm(uuid4(), make_payment_create(ctx)) is None
+        result = await ctx["service"].confirm(principal, uuid4(), make_payment_create(ctx))
+
+        assert result is None
 
     async def test_confirms_a_pending_reservation(self, fake_redis):
         ctx = await make_service(fake_redis)
@@ -159,10 +162,43 @@ class TestConfirm:
         reservations = await ctx["service"].create_hold(principal, make_reservation_create(ctx))
         reservation_id = uuid_from(reservations[0]["id"])
 
-        confirmed = await ctx["service"].confirm(reservation_id, make_payment_create(ctx))
+        confirmed = await ctx["service"].confirm(
+            principal, reservation_id, make_payment_create(ctx)
+        )
 
         assert confirmed["status"] == "confirmed"
         assert confirmed["expires_at"] is None
+
+    async def test_guest_can_confirm_their_own_hold(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        guest = Principal(user_id=None, type=ReservationUserType.GUEST)
+        reservations = await ctx["service"].create_hold(guest, make_reservation_create(ctx))
+        reservation_id = uuid_from(reservations[0]["id"])
+
+        confirmed = await ctx["service"].confirm(guest, reservation_id, make_payment_create(ctx))
+
+        assert confirmed["status"] == "confirmed"
+
+    async def test_admin_can_confirm_someone_elses_hold(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        owner = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
+        reservations = await ctx["service"].create_hold(owner, make_reservation_create(ctx))
+        reservation_id = uuid_from(reservations[0]["id"])
+        admin = Principal(user_id=uuid4(), type=ReservationUserType.ADMIN)
+
+        confirmed = await ctx["service"].confirm(admin, reservation_id, make_payment_create(ctx))
+
+        assert confirmed["status"] == "confirmed"
+
+    async def test_non_owner_non_admin_is_not_authorized(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        owner = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
+        reservations = await ctx["service"].create_hold(owner, make_reservation_create(ctx))
+        reservation_id = uuid_from(reservations[0]["id"])
+        stranger = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
+
+        with pytest.raises(NotAuthorizedError):
+            await ctx["service"].confirm(stranger, reservation_id, make_payment_create(ctx))
 
     async def test_payment_amount_mismatch_raises_payment_failed_error(self, fake_redis):
         ctx = await make_service(fake_redis)
@@ -172,7 +208,7 @@ class TestConfirm:
 
         with pytest.raises(PaymentFailedError):
             await ctx["service"].confirm(
-                reservation_id, make_payment_create(ctx, amount=Decimal("1.00"))
+                principal, reservation_id, make_payment_create(ctx, amount=Decimal("1.00"))
             )
 
         # Still pending — a failed payment doesn't consume the hold.
@@ -184,10 +220,10 @@ class TestConfirm:
         principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
         reservations = await ctx["service"].create_hold(principal, make_reservation_create(ctx))
         reservation_id = uuid_from(reservations[0]["id"])
-        await ctx["service"].confirm(reservation_id, make_payment_create(ctx))
+        await ctx["service"].confirm(principal, reservation_id, make_payment_create(ctx))
 
         with pytest.raises(ValueError, match="Only a pending reservation"):
-            await ctx["service"].confirm(reservation_id, make_payment_create(ctx))
+            await ctx["service"].confirm(principal, reservation_id, make_payment_create(ctx))
 
     async def test_lazily_expires_a_stale_pending_hold(self, fake_redis):
         ctx = await make_service(fake_redis)
@@ -200,7 +236,7 @@ class TestConfirm:
         ctx["producer"].reset_mock()
 
         with pytest.raises(ValueError, match="This hold has expired"):
-            await ctx["service"].confirm(reservation_id, make_payment_create(ctx))
+            await ctx["service"].confirm(principal, reservation_id, make_payment_create(ctx))
 
         expired = await ctx["service"].redis_repo.get(reservation_id)
         assert expired["status"] == "expired"
@@ -280,7 +316,7 @@ class TestCancel:
         principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
         reservations = await ctx["service"].create_hold(principal, make_reservation_create(ctx))
         reservation_id = uuid_from(reservations[0]["id"])
-        await ctx["service"].confirm(reservation_id, make_payment_create(ctx))
+        await ctx["service"].confirm(principal, reservation_id, make_payment_create(ctx))
 
         await ctx["service"].cancel(principal, reservation_id)
 

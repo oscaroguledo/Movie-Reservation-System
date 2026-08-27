@@ -130,6 +130,15 @@ class TestConfirmReservation:
 
         assert response.status_code == 402
 
+    def test_not_authorized_returns_403(self):
+        service = AsyncMock()
+        service.confirm.side_effect = NotAuthorizedError("Not authorized to confirm this")
+        client = make_client(service)
+
+        response = client.post(f"/reservations/{uuid4()}/confirm", json=make_payment_payload())
+
+        assert response.status_code == 403
+
 
 class TestListMyReservations:
     def test_returns_the_principals_reservations(self):

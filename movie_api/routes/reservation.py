@@ -46,9 +46,13 @@ async def confirm_reservation(
     payload: PaymentCreate,
     response: Response,
     reservation_service: ReservationService = Depends(get_reservation_service),
+    principal: Principal = Depends(get_current_principal),
 ) -> APIResponse:
     try:
-        reservation = await reservation_service.confirm(reservation_id, payload)
+        reservation = await reservation_service.confirm(principal, reservation_id, payload)
+    except NotAuthorizedError as exc:
+        response.status_code = 403
+        return EResponse(message=str(exc), status=403)
     except PaymentFailedError as exc:
         response.status_code = 402
         return EResponse(message=str(exc), status=402)
