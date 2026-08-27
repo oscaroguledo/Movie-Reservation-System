@@ -40,6 +40,7 @@ class Payment(Base):
         Enum(
             PaymentStatus,
             name="payment_status",
+            schema="movie_api",
             values_callable=lambda x: [e.value for e in x],
         ),
         nullable=False,

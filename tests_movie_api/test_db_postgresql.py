@@ -1,9 +1,6 @@
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 from core.config import get_settings
-from core.db.postgresql import engine, get_session, init_models
-from models import Base
+from core.db.postgresql import engine, get_session
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -22,22 +19,3 @@ async def test_get_session_yields_and_closes_an_async_session():
 
     with pytest.raises(StopAsyncIteration):
         await agen.__anext__()
-
-
-async def test_init_models_creates_schema_and_tables():
-    mock_conn = MagicMock()
-    mock_conn.execute = AsyncMock()
-    mock_conn.run_sync = AsyncMock()
-
-    mock_begin_ctx = MagicMock()
-    mock_begin_ctx.__aenter__ = AsyncMock(return_value=mock_conn)
-    mock_begin_ctx.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("core.db.postgresql.engine") as mock_engine:
-        mock_engine.begin.return_value = mock_begin_ctx
-        await init_models()
-
-    mock_conn.execute.assert_awaited_once()
-    schema_sql = str(mock_conn.execute.await_args.args[0])
-    assert "CREATE SCHEMA IF NOT EXISTS movie_api" in schema_sql
-    mock_conn.run_sync.assert_awaited_once_with(Base.metadata.create_all)

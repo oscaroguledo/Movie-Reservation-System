@@ -1,5 +1,5 @@
 import runpy
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -112,10 +112,7 @@ def test_main_entrypoint_starts_uvicorn_with_expected_settings():
 def test_lifespan_starts_and_stops_kafka_producer_on_app_state():
     import main
 
-    with (
-        patch("main.KafkaProducer") as mock_cls,
-        patch("main.init_models", new_callable=AsyncMock) as mock_init_models,
-    ):
+    with patch("main.KafkaProducer") as mock_cls:
         instance = mock_cls.return_value
         instance.__aenter__.return_value = instance
 
@@ -124,4 +121,3 @@ def test_lifespan_starts_and_stops_kafka_producer_on_app_state():
             instance.__aenter__.assert_awaited_once()
 
         instance.__aexit__.assert_awaited_once()
-        mock_init_models.assert_awaited_once()

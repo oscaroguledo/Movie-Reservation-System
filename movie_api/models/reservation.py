@@ -66,6 +66,7 @@ class Reservation(Base):
         Enum(
             ReservationUserType,
             name="reservation_user_type",
+            schema="movie_api",
             values_callable=lambda x: [e.value for e in x],
         ),
         nullable=False,
@@ -82,6 +83,7 @@ class Reservation(Base):
         Enum(
             ReservationStatus,
             name="reservation_status",
+            schema="movie_api",
             values_callable=lambda x: [e.value for e in x],
         ),
         nullable=False,

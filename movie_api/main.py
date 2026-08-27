@@ -1,7 +1,6 @@
 import logging
 
 from core.config import get_settings
-from core.db.postgresql import init_models
 from core.kafka import KafkaProducer
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
@@ -23,7 +22,8 @@ logging.basicConfig(level=_settings.log_level)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_models()
+    # Schema is owned by Alembic migrations (see migrations/), applied by
+    # the movie-migrate service before this container starts — not here.
     async with KafkaProducer() as producer:
         app.state.kafka_producer = producer
         yield

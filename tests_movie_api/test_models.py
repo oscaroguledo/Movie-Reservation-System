@@ -3,7 +3,6 @@ from decimal import Decimal
 from uuid import uuid4
 
 import models
-from core.db.postgresql import Base as PostgresBase
 from models import (
     Genre,
     Movie,
@@ -22,8 +21,7 @@ from models import (
 
 def test_all_models_register_on_the_single_shared_base():
     """Regression test: separate Base(DeclarativeBase) instances used to mean
-    init_models()'s create_all() couldn't see all the models."""
-    assert models.Base is PostgresBase
+    a model's table wouldn't be visible to Alembic's autogenerate."""
     assert set(models.Base.metadata.tables) == {
         "movie_api.genres",
         "movie_api.movies",
