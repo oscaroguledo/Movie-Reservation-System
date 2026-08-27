@@ -147,6 +147,57 @@ class TestCreateHold:
             await ctx["service"].create_hold(principal, make_reservation_create(ctx))
 
 
+class TestGetForPrincipal:
+    async def test_returns_none_when_not_found(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
+
+        result = await ctx["service"].get_for_principal(principal, uuid4())
+
+        assert result is None
+
+    async def test_owner_can_view_their_own_hold(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        principal = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
+        reservations = await ctx["service"].create_hold(principal, make_reservation_create(ctx))
+        reservation_id = uuid_from(reservations[0]["id"])
+
+        result = await ctx["service"].get_for_principal(principal, reservation_id)
+
+        assert result["id"] == str(reservation_id)
+
+    async def test_guest_can_view_their_own_hold(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        guest = Principal(user_id=None, type=ReservationUserType.GUEST)
+        reservations = await ctx["service"].create_hold(guest, make_reservation_create(ctx))
+        reservation_id = uuid_from(reservations[0]["id"])
+
+        result = await ctx["service"].get_for_principal(guest, reservation_id)
+
+        assert result["id"] == str(reservation_id)
+
+    async def test_admin_can_view_someone_elses_hold(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        owner = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
+        reservations = await ctx["service"].create_hold(owner, make_reservation_create(ctx))
+        reservation_id = uuid_from(reservations[0]["id"])
+        admin = Principal(user_id=uuid4(), type=ReservationUserType.ADMIN)
+
+        result = await ctx["service"].get_for_principal(admin, reservation_id)
+
+        assert result["id"] == str(reservation_id)
+
+    async def test_non_owner_non_admin_is_not_authorized(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        owner = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
+        reservations = await ctx["service"].create_hold(owner, make_reservation_create(ctx))
+        reservation_id = uuid_from(reservations[0]["id"])
+        stranger = Principal(user_id=uuid4(), type=ReservationUserType.REGULAR)
+
+        with pytest.raises(NotAuthorizedError):
+            await ctx["service"].get_for_principal(stranger, reservation_id)
+
+
 class TestConfirm:
     async def test_returns_none_when_not_found(self, fake_redis):
         ctx = await make_service(fake_redis)

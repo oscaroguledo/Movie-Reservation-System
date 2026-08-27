@@ -77,6 +77,26 @@ async def list_my_reservations(
     return SResponse(data=reservations, message="Reservations retrieved", status=200)
 
 
+@router.get("/reservations/{reservation_id}", response_model=APIResponse[dict])
+async def get_reservation(
+    reservation_id: UUID,
+    response: Response,
+    reservation_service: ReservationService = Depends(get_reservation_service),
+    principal: Principal = Depends(get_current_principal),
+) -> APIResponse:
+    try:
+        reservation = await reservation_service.get_for_principal(principal, reservation_id)
+    except NotAuthorizedError as exc:
+        response.status_code = 403
+        return EResponse(message=str(exc), status=403)
+
+    if reservation is None:
+        response.status_code = 404
+        return EResponse(message="Reservation not found", status=404)
+
+    return SResponse(data=reservation, message="Reservation retrieved", status=200)
+
+
 @router.patch("/reservations/{reservation_id}/cancel", response_model=APIResponse[dict])
 async def cancel_reservation(
     reservation_id: UUID,

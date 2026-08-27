@@ -1,7 +1,7 @@
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
-from core.auth import Principal, require_authenticated
+from core.auth import Principal, get_current_principal
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from models import ReservationUserType
@@ -21,7 +21,7 @@ def make_client(
     app.include_router(router)
     app.dependency_overrides[get_reservation_service] = lambda: reservation_service
     app.dependency_overrides[get_payment_service] = lambda: payment_service
-    app.dependency_overrides[require_authenticated] = lambda: principal
+    app.dependency_overrides[get_current_principal] = lambda: principal
     return TestClient(app)
 
 
@@ -48,6 +48,19 @@ class TestListPaymentsForReservation:
         reservation_service.get.return_value = reservation
         payment_service.list_for_reservation.return_value = []
         client = make_client(reservation_service, payment_service, admin)
+
+        response = client.get(f"/reservations/{reservation['id']}/payments")
+
+        assert response.status_code == 200
+
+    def test_guest_can_view_a_guest_holds_payments(self):
+        reservation_service = AsyncMock()
+        payment_service = AsyncMock()
+        guest = Principal(user_id=None, type=ReservationUserType.GUEST)
+        reservation = make_reservation(user_id=None)
+        reservation_service.get.return_value = reservation
+        payment_service.list_for_reservation.return_value = []
+        client = make_client(reservation_service, payment_service, guest)
 
         response = client.get(f"/reservations/{reservation['id']}/payments")
 

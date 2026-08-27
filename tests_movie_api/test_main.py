@@ -68,6 +68,7 @@ def test_reservation_router_is_mounted():
 
     paths = set(app.openapi()["paths"])
     assert "/reservations" in paths
+    assert "/reservations/{reservation_id}" in paths
     assert "/reservations/{reservation_id}/confirm" in paths
     assert "/reservations/{reservation_id}/cancel" in paths
 

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from core.auth import Principal, require_authenticated
+from core.auth import Principal, get_current_principal
 from core.dependencies import get_payment_service, get_reservation_service
 from core.response import APIResponse, EResponse, SResponse
 from fastapi import APIRouter, Depends, Response
@@ -18,14 +18,14 @@ async def list_payments_for_reservation(
     response: Response,
     reservation_service: ReservationService = Depends(get_reservation_service),
     payment_service: PaymentService = Depends(get_payment_service),
-    principal: Principal = Depends(require_authenticated),
+    principal: Principal = Depends(get_current_principal),
 ) -> APIResponse:
     reservation = await reservation_service.get(reservation_id)
     if reservation is None:
         response.status_code = 404
         return EResponse(message="Reservation not found", status=404)
 
-    if not ReservationService.is_authorized(principal, reservation):
+    if not ReservationService.can_access(principal, reservation):
         response.status_code = 403
         return EResponse(message="Not authorized to view these payments", status=403)
 

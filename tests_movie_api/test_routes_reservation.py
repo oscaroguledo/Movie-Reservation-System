@@ -162,6 +162,47 @@ class TestListMyReservations:
         service.list_for_principal.assert_not_called()
 
 
+class TestGetReservation:
+    def test_returns_the_reservation(self):
+        service = AsyncMock()
+        reservation = make_reservation()
+        service.get_for_principal.return_value = reservation
+        client = make_client(service)
+
+        response = client.get(f"/reservations/{reservation['id']}")
+
+        assert response.status_code == 200
+        assert response.json()["data"]["id"] == reservation["id"]
+
+    def test_a_guest_can_fetch_their_own_hold_without_authentication(self):
+        service = AsyncMock()
+        reservation = make_reservation(user_id=None)
+        service.get_for_principal.return_value = reservation
+        client = make_client(service)
+
+        response = client.get(f"/reservations/{reservation['id']}")
+
+        assert response.status_code == 200
+
+    def test_returns_404_when_not_found(self):
+        service = AsyncMock()
+        service.get_for_principal.return_value = None
+        client = make_client(service)
+
+        response = client.get(f"/reservations/{uuid4()}")
+
+        assert response.status_code == 404
+
+    def test_not_authorized_returns_403(self):
+        service = AsyncMock()
+        service.get_for_principal.side_effect = NotAuthorizedError("Not authorized")
+        client = make_client(service)
+
+        response = client.get(f"/reservations/{uuid4()}")
+
+        assert response.status_code == 403
+
+
 class TestCancelReservation:
     def test_owner_can_cancel(self):
         service = AsyncMock()
