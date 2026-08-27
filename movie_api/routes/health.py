@@ -1,8 +1,11 @@
 import logging
 
 from core.db.postgresql import get_session
+from core.db.redis import get_redis
 from core.response import APIResponse, EResponse, SResponse
 from fastapi import APIRouter, Depends, Response
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,8 +19,9 @@ logger = logging.getLogger(__name__)
 async def healthz(
     response: Response,
     session: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis),
 ) -> APIResponse:
-    checks = {"auth-api": "ok", "postgres": "ok"}
+    checks = {"movie-api": "ok", "postgres": "ok", "redis": "ok"}
     healthy = True
 
     try:
@@ -31,6 +35,19 @@ async def healthz(
         checks["postgres"] = "unreachable"
         healthy = False
         logger.error("Postgres health check failed", exc_info=True)
+
+    try:
+        await redis.ping()
+        logger.debug("Redis health check passed")
+    except RedisError:
+        checks["redis"] = "unreachable"
+        healthy = False
+        logger.error("Redis health check failed", exc_info=True)
+    except Exception:
+        checks["redis"] = "unreachable"
+        healthy = False
+        logger.error("Redis health check failed", exc_info=True)
+
     if healthy:
         return SResponse(data=checks, message="Service is healthy")
 

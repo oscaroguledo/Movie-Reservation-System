@@ -12,6 +12,13 @@ def test_app_is_fastapi_instance_with_expected_title():
     assert app.title == "Movie API"
 
 
+def test_health_router_is_mounted():
+    from main import app
+
+    paths = set(app.openapi()["paths"])
+    assert "/health" in paths
+
+
 def test_genre_router_is_mounted():
     from main import app
 
@@ -53,6 +60,13 @@ def test_reservation_router_is_mounted():
     assert "/reservations" in paths
     assert "/reservations/{reservation_id}/confirm" in paths
     assert "/reservations/{reservation_id}/cancel" in paths
+
+
+def test_payment_router_is_mounted():
+    from main import app
+
+    paths = set(app.openapi()["paths"])
+    assert "/reservations/{reservation_id}/payments" in paths
 
 
 def test_report_router_is_mounted():
