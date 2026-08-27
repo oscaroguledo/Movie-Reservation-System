@@ -216,14 +216,16 @@ class TestCancelReservation:
         assert response.status_code == 200
         assert response.json()["data"]["status"] == "cancelled"
 
-    def test_guest_is_unauthenticated(self):
+    def test_a_guest_can_cancel_their_own_hold_without_authentication(self):
         service = AsyncMock()
+        reservation = make_reservation(user_id=None, status="cancelled")
+        service.cancel.return_value = reservation
         client = make_client(service)
 
-        response = client.patch(f"/reservations/{uuid4()}/cancel")
+        response = client.patch(f"/reservations/{reservation['id']}/cancel")
 
-        assert response.status_code == 401
-        service.cancel.assert_not_called()
+        assert response.status_code == 200
+        assert response.json()["data"]["status"] == "cancelled"
 
     def test_not_authorized_returns_403(self):
         service = AsyncMock()

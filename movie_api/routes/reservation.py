@@ -102,7 +102,7 @@ async def cancel_reservation(
     reservation_id: UUID,
     response: Response,
     reservation_service: ReservationService = Depends(get_reservation_service),
-    principal: Principal = Depends(require_authenticated),
+    principal: Principal = Depends(get_current_principal),
 ) -> APIResponse:
     try:
         reservation = await reservation_service.cancel(principal, reservation_id)

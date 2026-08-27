@@ -201,7 +201,7 @@ class ReservationService:
         if reservation is None:
             return None
 
-        if not self.is_authorized(principal, reservation):
+        if not self.can_access(principal, reservation):
             raise NotAuthorizedError("Not authorized to cancel this reservation")
 
         if reservation["status"] not in (

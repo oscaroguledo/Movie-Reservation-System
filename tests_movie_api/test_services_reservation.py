@@ -352,6 +352,16 @@ class TestCancel:
         with pytest.raises(NotAuthorizedError):
             await ctx["service"].cancel(stranger, reservation_id)
 
+    async def test_guest_can_cancel_their_own_hold(self, fake_redis):
+        ctx = await make_service(fake_redis)
+        guest = Principal(user_id=None, type=ReservationUserType.GUEST)
+        reservations = await ctx["service"].create_hold(guest, make_reservation_create(ctx))
+        reservation_id = uuid_from(reservations[0]["id"])
+
+        cancelled = await ctx["service"].cancel(guest, reservation_id)
+
+        assert cancelled["status"] == "cancelled"
+
     async def test_rejects_cancelling_a_screening_that_already_started(self, fake_redis):
         past_start = datetime.now(timezone.utc) - timedelta(hours=1)
         ctx = await make_service(fake_redis, screening_start=past_start)
